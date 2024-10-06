@@ -9,29 +9,20 @@ use arrow::array::Float64Array;
 
 
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PackedNode {
-    #[serde(serialize_with = "serialize_packed_data", deserialize_with = "deserialize_packed_data")]
-    packed_data: u64,
+    is_leaf: bool,
+    default_left: bool,
+    split_index: i32,
+    split_type: i32,
+    left_child: i32,
+    right_child: i32,
     loss_change: f64,
     sum_hessian: f64,
     base_weight: f64,
     split_condition: f64,
 }
 
-fn serialize_packed_data<S>(packed_data: &u64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_u64(*packed_data)
-}
-
-fn deserialize_packed_data<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    u64::deserialize(deserializer)
-}
 
 impl PackedNode {
     fn new(
@@ -46,16 +37,13 @@ impl PackedNode {
         base_weight: f64,
         split_condition: f64,
     ) -> Self {
-        let mut packed_data = 0u64;
-        packed_data |= (is_leaf as u64) << 63;
-        packed_data |= (default_left as u64) << 62;
-        packed_data |= ((split_index as u64) & 0x3FFFFFFF) << 32;
-        packed_data |= ((split_type as u64) & 0xFF) << 24;
-        packed_data |= ((left_child as u64) & 0xFFF) << 12;
-        packed_data |= (right_child as u64) & 0xFFF;
-
         PackedNode {
-            packed_data,
+            is_leaf,
+            default_left,
+            split_index,
+            split_type,
+            left_child,
+            right_child,
             loss_change,
             sum_hessian,
             base_weight,
@@ -64,29 +52,65 @@ impl PackedNode {
     }
 
     fn is_leaf(&self) -> bool {
-        (self.packed_data >> 63) & 1 == 1
+        self.is_leaf
     }
 
     fn default_left(&self) -> bool {
-        (self.packed_data >> 62) & 1 == 1
+        self.default_left
     }
 
     fn split_index(&self) -> i32 {
-        ((self.packed_data >> 32) & 0x3FFFFFFF) as i32
+        self.split_index
     }
 
     fn split_type(&self) -> i32 {
-        ((self.packed_data >> 24) & 0xFF) as i32
+        self.split_type
     }
 
     fn left_child(&self) -> i32 {
-        ((self.packed_data >> 12) & 0xFFF) as i32
+        self.left_child
     }
 
     fn right_child(&self) -> i32 {
-        (self.packed_data & 0xFFF) as i32
+        self.right_child
     }
 }
+
+impl<'de> Deserialize<'de> for PackedNode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct NodeHelper {
+            is_leaf: bool,
+            default_left: bool,
+            split_index: i32,
+            split_type: i32,
+            left_child: i32,
+            right_child: i32,
+            loss_change: f64,
+            sum_hessian: f64,
+            base_weight: f64,
+            split_condition: f64,
+        }
+
+        let helper = NodeHelper::deserialize(deserializer)?;
+        Ok(PackedNode::new(
+            helper.is_leaf,
+            helper.default_left,
+            helper.split_index,
+            helper.split_type,
+            helper.left_child,
+            helper.right_child,
+            helper.loss_change,
+            helper.sum_hessian,
+            helper.base_weight,
+            helper.split_condition,
+        ))
+    }
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TreeParam {
