@@ -1,115 +1,11 @@
 use serde::{Deserialize, Serialize};
 use arrow::record_batch::RecordBatch;
-use std::collections::HashMap;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use arrow::datatypes::DataType;
 use arrow::array::Array;
 use arrow::array::Float64Array;
-
-
-
-#[derive(Debug, Clone)]
-struct PackedNode {
-    is_leaf: bool,
-    default_left: bool,
-    split_index: i32,
-    split_type: i32,
-    left_child: i32,
-    right_child: i32,
-    loss_change: f64,
-    sum_hessian: f64,
-    base_weight: f64,
-    split_condition: f64,
-}
-
-
-impl PackedNode {
-    fn new(
-        is_leaf: bool,
-        default_left: bool,
-        split_index: i32,
-        split_type: i32,
-        left_child: i32,
-        right_child: i32,
-        loss_change: f64,
-        sum_hessian: f64,
-        base_weight: f64,
-        split_condition: f64,
-    ) -> Self {
-        PackedNode {
-            is_leaf,
-            default_left,
-            split_index,
-            split_type,
-            left_child,
-            right_child,
-            loss_change,
-            sum_hessian,
-            base_weight,
-            split_condition,
-        }
-    }
-
-    fn is_leaf(&self) -> bool {
-        self.is_leaf
-    }
-
-    fn default_left(&self) -> bool {
-        self.default_left
-    }
-
-    fn split_index(&self) -> i32 {
-        self.split_index
-    }
-
-    fn split_type(&self) -> i32 {
-        self.split_type
-    }
-
-    fn left_child(&self) -> i32 {
-        self.left_child
-    }
-
-    fn right_child(&self) -> i32 {
-        self.right_child
-    }
-}
-
-impl<'de> Deserialize<'de> for PackedNode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct NodeHelper {
-            is_leaf: bool,
-            default_left: bool,
-            split_index: i32,
-            split_type: i32,
-            left_child: i32,
-            right_child: i32,
-            loss_change: f64,
-            sum_hessian: f64,
-            base_weight: f64,
-            split_condition: f64,
-        }
-
-        let helper = NodeHelper::deserialize(deserializer)?;
-        Ok(PackedNode::new(
-            helper.is_leaf,
-            helper.default_left,
-            helper.split_index,
-            helper.split_type,
-            helper.left_child,
-            helper.right_child,
-            helper.loss_change,
-            helper.sum_hessian,
-            helper.base_weight,
-            helper.split_condition,
-        ))
-    }
-}
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -231,7 +127,6 @@ impl Tree {
     }
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Trees {
     base_score: f64,
@@ -302,29 +197,5 @@ impl Trees {
     fn predict(&self, features: &[f64]) -> f64 {
         let aggregated_score: f64 = self.trees.iter().map(|tree| tree.score(features)).sum();
         self.base_score + aggregated_score
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_packed_node() {
-        let node = PackedNode::new(
-            false, true, 42, 1, 100, 200,
-            0.5, 1.0, -0.1, 0.3
-        );
-
-        assert_eq!(node.is_leaf(), false);
-        assert_eq!(node.default_left(), true);
-        assert_eq!(node.split_index(), 42);
-        assert_eq!(node.split_type(), 1);
-        assert_eq!(node.left_child(), 100);
-        assert_eq!(node.right_child(), 200);
-        assert_eq!(node.loss_change, 0.5);
-        assert_eq!(node.sum_hessian, 1.0);
-        assert_eq!(node.base_weight, -0.1);
-        assert_eq!(node.split_condition, 0.3);
     }
 }
