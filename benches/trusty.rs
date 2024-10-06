@@ -1,4 +1,4 @@
-
+use rayon::prelude::*;
 use arrow::array::{Float64Array, StringArray};
 use arrow::csv::ReaderBuilder;
 use arrow::record_batch::RecordBatch;
@@ -13,10 +13,16 @@ use serde_json::Value;
 
 use std::error::Error;
 
-async fn run_prediction(trees:&Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
-    for batch in batches {
+// async fn run_prediction(trees:&Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
+//     for batch in batches {
+//         let _prediction = trees.predict_batch(batch);
+//     }
+//     Ok(())
+// }
+fn run_prediction(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
+    batches.par_iter().for_each(|batch| {
         let _prediction = trees.predict_batch(batch);
-    }
+    });
     Ok(())
 }
 
@@ -192,13 +198,13 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let trees = Trees::load(&model_data);
 
     // Read and preprocess the CSV data
-    let raw_batches = read_csv_to_batches("diamonds.csv", 8000)?;
+    let raw_batches = read_csv_to_batches("diamonds.csv", 500)?;
     let batches = preprocess_batches(&raw_batches)?;
 
     c.bench_function("trusty", |b| {
         b.to_async(&rt)
             .iter(|| async { 
-                run_prediction(&trees, &batches).await.unwrap() })
+                run_prediction(&trees, &batches).unwrap() })
     });
 
     Ok(())
