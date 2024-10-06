@@ -198,7 +198,7 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let trees = Trees::load(&model_data);
 
     // Read and preprocess the CSV data
-    let raw_batches = read_csv_to_batches("diamonds.csv", 500)?;
+    let raw_batches = read_csv_to_batches("diamonds.csv", 1024)?;
     let batches = preprocess_batches(&raw_batches)?;
 
     c.bench_function("trusty", |b| {

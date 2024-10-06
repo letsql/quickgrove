@@ -6,7 +6,7 @@ use arrow::datatypes::{DataType, Float64Type};
 use arrow::array::{Array, Float64Array, PrimitiveArray};
 use arrow::error::ArrowError;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct TreeParam {
     num_nodes: String,
     size_leaf_vector: String,
@@ -19,7 +19,7 @@ enum NodeType {
     Internal,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Node {
     node_type: NodeType,
     split_index: Option<i32>,
@@ -32,12 +32,23 @@ struct Node {
     sum_hessian: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tree {
     id: i32,
     tree_param: TreeParam,
     feature_map: HashMap<i32, usize>,
     nodes: Vec<Node>,
+}
+
+#[derive(Clone)]
+pub struct Predicate {
+    min_values: Vec<f64>,
+    max_values: Vec<f64>,
+}
+
+pub struct PrunedTree {
+    original_tree: Arc<Tree>,
+    active_nodes: Vec<bool>,
 }
 
 impl Tree {
@@ -116,45 +127,84 @@ impl Tree {
         }
     }
 
+    fn prune(&self, predicate: &Predicate) -> PrunedTree {
+        let mut active_nodes = vec![true; self.nodes.len()];
+
+        for (i, node) in self.nodes.iter().enumerate() {
+            if let (Some(split_index), Some(split_condition)) = (node.split_index, node.split_condition) {
+                if let Some(&feature_index) = self.feature_map.get(&split_index) {
+                    let min_value = predicate.min_values[feature_index];
+                    let max_value = predicate.max_values[feature_index];
+
+                    if max_value < split_condition {
+                        // Prune right subtree
+                        self.prune_subtree(&mut active_nodes, node.right_child.unwrap_or(i));
+                    } else if min_value >= split_condition {
+                        // Prune left subtree
+                        self.prune_subtree(&mut active_nodes, node.left_child.unwrap_or(i));
+                    }
+                }
+            }
+        }
+
+        PrunedTree {
+            original_tree: Arc::new(self.clone()),
+            active_nodes,
+        }
+    }
+
+    fn prune_subtree(&self, active_nodes: &mut Vec<bool>, start_index: usize) {
+        let mut stack = vec![start_index];
+        while let Some(index) = stack.pop() {
+            active_nodes[index] = false;
+            if let Some(node) = self.nodes.get(index) {
+                if let Some(left_child) = node.left_child {
+                    stack.push(left_child);
+                }
+                if let Some(right_child) = node.right_child {
+                    stack.push(right_child);
+                }
+            }
+        }
+    }
+}
+
+impl PrunedTree {
     fn score(&self, features: &RecordBatch) -> Result<PrimitiveArray<Float64Type>, ArrowError> {
         let num_rows = features.num_rows();
-        let mut node_indices = vec![0; num_rows];
         let mut scores = vec![0.0; num_rows];
 
-        for _ in 0..self.nodes.len() {
-            let mut new_node_indices = vec![0; num_rows];
-
-            for (row, &node_index) in node_indices.iter().enumerate() {
-                let node = &self.nodes[node_index];
-
+        for row in 0..num_rows {
+            let mut node_index = 0;
+            while self.active_nodes[node_index] {
+                let node = &self.original_tree.nodes[node_index];
                 match node.node_type {
                     NodeType::Leaf => {
                         scores[row] = node.weight;
-                        new_node_indices[row] = node_index;
+                        break;
                     }
                     NodeType::Internal => {
                         if let (Some(split_index), Some(split_condition)) = (node.split_index, node.split_condition) {
-                            if let Some(feature_index) = self.feature_map.get(&split_index) {
+                            if let Some(feature_index) = self.original_tree.feature_map.get(&split_index) {
                                 if let Some(feature_column) = features.column(*feature_index).as_any().downcast_ref::<Float64Array>() {
                                     let feature_value = feature_column.value(row);
-                                    new_node_indices[row] = if feature_value < split_condition {
+                                    node_index = if feature_value < split_condition {
                                         node.left_child.unwrap_or(node_index)
                                     } else {
                                         node.right_child.unwrap_or(node_index)
                                     };
                                 } else {
-                                    new_node_indices[row] = node_index;
+                                    break;
                                 }
                             } else {
-                                new_node_indices[row] = node_index;
+                                break;
                             }
                         } else {
-                            new_node_indices[row] = node_index;
+                            break;
                         }
                     }
                 }
             }
-            std::mem::swap(&mut node_indices, &mut new_node_indices);
         }
         Ok(PrimitiveArray::<Float64Type>::from(scores))
     }
@@ -192,16 +242,40 @@ impl Trees {
     }
 
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<PrimitiveArray<Float64Type>, ArrowError> {
+        let predicate = self.create_predicate(batch);
+        let pruned_trees: Vec<PrunedTree> = self.trees.iter().map(|tree| tree.prune(&predicate)).collect();
+
         let mut scores = vec![self.base_score; batch.num_rows()];
 
-        for tree in &self.trees {
-            let tree_scores = tree.score(batch)?;
+        for pruned_tree in &pruned_trees {
+            let tree_scores = pruned_tree.score(batch)?;
             for (i, &tree_score) in tree_scores.values().iter().enumerate() {
                 scores[i] += tree_score;
             }
         }
 
         Ok(PrimitiveArray::<Float64Type>::from(scores))
+    }
+
+    fn create_predicate(&self, batch: &RecordBatch) -> Predicate {
+        let mut min_values = vec![f64::MAX; self.feature_names.len()];
+        let mut max_values = vec![f64::MIN; self.feature_names.len()];
+
+        for (i, name) in self.feature_names.iter().enumerate() {
+            if let Some(col) = batch.column_by_name(name) {
+                if let Some(float_array) = col.as_any().downcast_ref::<Float64Array>() {
+                    for value in float_array.iter().flatten() {
+                        min_values[i] = min_values[i].min(value);
+                        max_values[i] = max_values[i].max(value);
+                    }
+                }
+            }
+        }
+
+        Predicate {
+            min_values,
+            max_values,
+        }
     }
 
     fn extract_features(&self, batch: &RecordBatch) -> Vec<Arc<dyn Array>> {
