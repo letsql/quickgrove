@@ -11,6 +11,8 @@ serde_json = "1.0"
 arrow = "53.0"
 rayon = "1.10.0"
 thiserror = "1.0.64"
+env_logger = "0.10.0"
+log = "0.4.14"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports", "async_futures","async_tokio"] }

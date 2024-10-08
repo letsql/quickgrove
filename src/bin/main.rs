@@ -5,17 +5,20 @@ use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use trusty::Trees;
+use trusty::{Trees, Predicate, Condition};
+use env_logger::Env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load model data
     println!("Loading model data");
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
     let model_file = File::open("models/pricing-model-100-mod.json")?;
     let reader = BufReader::new(model_file);
     let model_data: Value = serde_json::from_reader(reader)?;
 
     // Create Trees instance
     let trees = Trees::load(&model_data);
+    
 
     println!("Creating Arrow arrays");
     let carat = Float64Array::from(vec![0.23]);
@@ -99,8 +102,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
 
+    let trees = Trees::load(&model_data);
+
+    // Print information without pruning
+    println!("Tree information without pruning:");
+    trees.print_tree_info(None);
+
+
     println!("Making predictions");
     let predictions = trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
+    let mut predicate = Predicate::new();
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(0.1));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(62.0));
+    println!("\nTree information with pruning:");
+    let pruned_trees = trees.prune(&predicate);
+    pruned_trees.print_tree_info(None);
+    let predictions = pruned_trees.predict_batch(&batch);
+    println!("Predictions: {:?}", predictions);
+
     Ok(())
 }
