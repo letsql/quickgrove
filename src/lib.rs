@@ -5,18 +5,6 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct TreeParam {
-    num_nodes: String,
-    size_leaf_vector: String,
-    num_feature: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-enum NodeType {
-    Leaf,
-    Internal,
-}
 
 const LEAF_NODE: i32 = -1;
 
@@ -32,7 +20,7 @@ pub struct Node {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tree {
     nodes: Vec<Node>,
-    feature_map: Vec<usize>,
+    feature_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +50,10 @@ impl Tree {
     pub fn new() -> Self {
         Tree {
             nodes: Vec::new(),
-            feature_map: Vec::new(),
+            feature_offset: 0,
         }
     }
+    
     pub fn load(tree_dict: &serde_json::Value, feature_names: &[String]) -> Self {
         let mut tree = Tree::new();
 
@@ -104,7 +93,7 @@ impl Tree {
             tree.nodes.push(node);
         }
 
-        tree.feature_map = feature_names.iter().enumerate().map(|(i, _)| i).collect();
+        tree.feature_offset = feature_names.iter().position(|name| name == &feature_names[0]).unwrap_or(0);
 
         tree
     }
@@ -116,7 +105,7 @@ impl Tree {
             if node.split_index == LEAF_NODE {
                 return node.weight;
             }
-            let feature_value = features[self.feature_map[node.split_index as usize]];
+            let feature_value = features[self.feature_offset + node.split_index as usize];
             node_index = if feature_value < node.split_condition {
                 node.left_child
             } else {
@@ -150,7 +139,7 @@ impl Tree {
             let mut new_node = node.clone();
 
             if node.split_index != LEAF_NODE {
-                let feature_index = self.feature_map[node.split_index as usize];
+                let feature_index = self.feature_offset + node.split_index as usize;
                 if let Some(feature_name) = feature_names.get(feature_index) {
                     if let Some(condition) = predicate.conditions.get(feature_name) {
                         debug!(
@@ -215,7 +204,7 @@ impl Tree {
             debug!("Tree structure changed. Keeping modified tree.");
             Some(Tree {
                 nodes: new_nodes,
-                feature_map: self.feature_map.clone(),
+                feature_offset: self.feature_offset,
             })
         } else {
             debug!("No changes made to the tree structure.");
@@ -234,6 +223,7 @@ pub struct Trees {
 
 impl Trees {
     pub fn load(model_data: &serde_json::Value) -> Self {
+
         let base_score = model_data["learner"]["learner_model_param"]["base_score"]
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
@@ -284,18 +274,9 @@ impl Trees {
     }
 
     pub fn tree_depths(&self) -> Vec<usize> {
-        self.trees.iter().map(|tree| {
-            fn depth(nodes: &[Node], index: usize) -> usize {
-                let node = &nodes[index];
-                if node.split_index == LEAF_NODE {
-                    1
-                } else {
-                    1 + depth(nodes, node.left_child).max(depth(nodes, node.right_child))
-                }
-            }
-            depth(&tree.nodes, 0)
-        }).collect()
+        self.trees.iter().map(|tree| tree.depth()).collect()
     }
+
     pub fn prune(&self, predicate: &Predicate) -> Self {
         let pruned_trees: Vec<Tree> = self
             .trees
@@ -309,7 +290,6 @@ impl Trees {
             base_score: self.base_score,
         }
     }
-
 
     pub fn print_tree_info(&self) {
         println!("Total number of trees: {}", self.total_trees());
