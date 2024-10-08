@@ -31,14 +31,9 @@ fn run_prediction_with_predicates(
     trees: &Trees,
     batches: &[RecordBatch],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(10.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(10.0));
-
-    let pruned_trees = trees.prune(&predicate);
 
     batches.par_iter().for_each(|batch| {
-        let _prediction = pruned_trees.predict_batch(batch);
+        let _prediction = trees.predict_batch(batch);
     });
     Ok(())
 }
@@ -323,6 +318,11 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
             .map(|b| b.num_rows())
             .sum::<usize>()
     );
+    let mut predicate = Predicate::new();
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(10.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(10.0));
+
+    let pruned_trees = trees.prune(&predicate);
 
     c.bench_function("trusty_no_pruning", |b| {
         b.to_async(&rt)
@@ -331,7 +331,7 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
 
     c.bench_function("trusty_with_pruning", |b| {
         b.to_async(&rt).iter(|| async {
-            run_prediction_with_predicates(&trees, &preprocessed_batches).unwrap()
+            run_prediction_with_predicates(&pruned_trees, &preprocessed_batches).unwrap()
         })
     });
 
