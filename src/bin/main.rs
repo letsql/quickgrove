@@ -11,7 +11,7 @@ use env_logger::Env;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load model data
     println!("Loading model data");
-    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+    env_logger::from_env(Env::default().default_filter_or("info")).init();
     let model_file = File::open("models/pricing-model-100-mod.json")?;
     let reader = BufReader::new(model_file);
     let model_data: Value = serde_json::from_reader(reader)?;
@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
 
     println!("Creating Arrow arrays");
-    let carat = Float64Array::from(vec![0.23]);
+    let carat = Float64Array::from(vec![2.35]);
     let depth = Float64Array::from(vec![61.5]);
     let table = Float64Array::from(vec![55.0]);
     let x = Float64Array::from(vec![3.95]);
@@ -113,13 +113,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let predictions = trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(0.1));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(62.0));
     println!("\nTree information with pruning:");
     let pruned_trees = trees.prune(&predicate);
     pruned_trees.print_tree_info(None);
     let predictions = pruned_trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
+
+    // pruned_trees.print_all_trees();
 
     Ok(())
 }

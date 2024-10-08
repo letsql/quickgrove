@@ -24,7 +24,7 @@ fn run_prediction(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn 
 
 fn run_prediction_with_predicates(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::LessThan(0.3));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(61.0));
 
     let pruned_trees = trees.prune(&predicate);
@@ -97,14 +97,15 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
         let carat = batch.column_by_name("carat").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
         let depth = batch.column_by_name("depth").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
         
-        let mask: Vec<bool> = carat.iter().zip(depth.iter())
-            .map(|(c, d)| c.map(|c| c >= 0.2).unwrap_or(false) && d.map(|d| d < 61.0).unwrap_or(false))
-            .collect();
-        
-        let boolean_mask = BooleanArray::from(mask);
+        // let mask: Vec<bool> = carat.iter().zip(depth.iter())
+        //     .map(|(c, d)| c.map(|c| c >= 0.2).unwrap_or(false) && d.map(|d| d < 61.0).unwrap_or(false))
+        //     .collect();
+        // 
+        // let boolean_mask = BooleanArray::from(mask);
         
         // Filter the record batch
-        let filtered_batch = filter_record_batch(batch, &boolean_mask)?;
+        // let filtered_batch = filter_record_batch(batch, &boolean_mask)?;
+        let filtered_batch = batch;
 
         let carat = filtered_batch.column_by_name("carat").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
         let cut = filtered_batch.column_by_name("cut").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
