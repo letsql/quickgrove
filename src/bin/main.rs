@@ -1,26 +1,22 @@
 use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
+use env_logger::Env;
+use log::debug;
 use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use trusty::{Trees, Predicate, Condition};
-use env_logger::Env;
+use trusty::{Condition, Predicate, Trees};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load model data
-    println!("Loading model data");
-    env_logger::from_env(Env::default().default_filter_or("info")).init();
+    debug!("Loading model data");
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let model_file = File::open("models/pricing-model-100-mod.json")?;
     let reader = BufReader::new(model_file);
     let model_data: Value = serde_json::from_reader(reader)?;
 
-    // Create Trees instance
-    let trees = Trees::load(&model_data);
-    
-
-    println!("Creating Arrow arrays");
+    debug!("Creating Arrow arrays");
     let carat = Float64Array::from(vec![2.35]);
     let depth = Float64Array::from(vec![61.5]);
     let table = Float64Array::from(vec![55.0]);
@@ -45,8 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let clarity_vvs1 = Float64Array::from(vec![0.0]);
     let clarity_vvs2 = Float64Array::from(vec![0.0]);
 
-    // Create RecordBatch
-    println!("Creating RecordBatch");
+    debug!("Creating RecordBatch");
     let schema = Arc::new(Schema::new(vec![
         Field::new("carat", DataType::Float64, false),
         Field::new("depth", DataType::Float64, false),
@@ -103,25 +98,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let trees = Trees::load(&model_data);
-
-    // Print information without pruning
-    println!("Tree information without pruning:");
-    trees.print_tree_info(None);
-
-
+    debug!("Without pruning:");
+    trees.print_tree_info();
     println!("Making predictions");
     let predictions = trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let mut predicate = Predicate::new();
     predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(62.0));
-    println!("\nTree information with pruning:");
+    println!("\nWith pruning:");
     let pruned_trees = trees.prune(&predicate);
-    pruned_trees.print_tree_info(None);
+    pruned_trees.print_tree_info();
     let predictions = pruned_trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
-
-    // pruned_trees.print_all_trees();
-
     Ok(())
 }

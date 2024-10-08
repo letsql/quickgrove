@@ -1,11 +1,9 @@
 use arrow::array::{Array, Float64Array};
-use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use log::{debug, error, info, warn};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct TreeParam {
@@ -157,53 +155,6 @@ impl Tree {
         }
     }
 
-    fn repair(&mut self) -> bool {
-        let mut index = 0;
-        let original_node_count = self.nodes.len();
-        while index < self.nodes.len() {
-            let (left_child, right_child, node_type) = {
-                let node = &self.nodes[index];
-                (node.left_child, node.right_child, node.node_type.clone())
-            };
-
-            match (left_child, right_child, node_type) {
-                (None, None, NodeType::Internal) => {
-                    // Remove internal nodes with no children
-                    self.nodes.remove(index);
-                    self.update_child_indices(index);
-                    continue; // Don't increment index as we've removed a node
-                }
-                (Some(child), None, _) | (None, Some(child), _) => {
-                    // Collapse nodes with single child
-                    let child_node = self.nodes[child].clone();
-                    self.nodes[index] = child_node;
-                    self.nodes.remove(child);
-                    self.update_child_indices(child);
-                    continue; // Recheck this node in case of multiple collapses
-                }
-                _ => {}
-            }
-            index += 1;
-        }
-
-        self.nodes.len() > 0 && self.nodes.len() < original_node_count
-    }
-
-    fn update_child_indices(&mut self, removed_index: usize) {
-        for node in &mut self.nodes {
-            if let Some(left_child) = node.left_child {
-                if left_child > removed_index {
-                    node.left_child = Some(left_child - 1);
-                }
-            }
-            if let Some(right_child) = node.right_child {
-                if right_child > removed_index {
-                    node.right_child = Some(right_child - 1);
-                }
-            }
-        }
-    }
-
     fn depth(&self) -> usize {
         fn recursive_depth(nodes: &[Node], node_index: usize) -> usize {
             let node = &nodes[node_index];
@@ -225,14 +176,18 @@ impl Tree {
     }
 
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
-        let mut new_nodes = self.nodes.clone();
-        let mut active_nodes = vec![true; self.nodes.len()];
+        let mut new_nodes = Vec::new();
+        let mut new_feature_map = HashMap::new();
+        let mut index_map = HashMap::new();
         let mut tree_changed = false;
 
-        debug!("Starting pruning process for tree {}", self.id);
+        debug!("Starting pruning for tree {}", self.id);
         debug!("Initial node count: {}", self.nodes.len());
 
-        for (i, node) in self.nodes.iter().enumerate() {
+        for (old_index, node) in self.nodes.iter().enumerate() {
+            let keep_node = true;
+            let mut new_node = node.clone();
+
             if let (Some(split_index), Some(split_condition)) =
                 (node.split_index, node.split_condition)
             {
@@ -241,70 +196,63 @@ impl Tree {
                         if let Some(condition) = predicate.conditions.get(feature_name) {
                             debug!(
                                 "Evaluating node {} on feature '{}' with split condition {}",
-                                i, feature_name, split_condition
+                                old_index, feature_name, split_condition
                             );
                             match condition {
                                 Condition::LessThan(value) => {
                                     if *value < split_condition {
-                                        debug!("Pruning right subtree of node {}", i);
-                                        self.prune_subtree(
-                                            &mut active_nodes,
-                                            &mut new_nodes,
-                                            node.right_child.unwrap_or(i),
-                                        );
+                                        debug!("Pruning right subtree of node {}", old_index);
+                                        new_node.right_child = None;
                                         tree_changed = true;
                                     }
                                 }
                                 Condition::GreaterThanOrEqual(value) => {
                                     if *value >= split_condition {
-                                        debug!("Pruning left subtree of node {}", i);
-                                        self.prune_subtree(
-                                            &mut active_nodes,
-                                            &mut new_nodes,
-                                            node.left_child.unwrap_or(i),
-                                        );
+                                        debug!("Pruning left subtree of node {}", old_index);
+                                        new_node.left_child = None;
                                         tree_changed = true;
                                     }
                                 }
                             }
-                        } else {
-                            debug!("No condition found for feature '{}'", feature_name);
                         }
-                    } else {
-                        warn!("Feature name not found for index {}", feature_index);
                     }
-                } else {
-                    warn!(
-                        "Feature index not found in feature_map for split_index {}",
-                        split_index
-                    );
                 }
-            } else {
-                debug!("Node {} is a leaf or has no split condition", i);
+            }
+
+            match (new_node.left_child, new_node.right_child) {
+                (None, None) => {
+                    if new_node.node_type == NodeType::Internal {
+                        debug!("Converting internal node {} to leaf", old_index);
+                        new_node.node_type = NodeType::Leaf;
+                        tree_changed = true;
+                    }
+                }
+                (Some(child), None) | (None, Some(child)) => {
+                    debug!("Replacing node {} with its only child", old_index);
+                    if let Some(child_node) = self.nodes.get(child) {
+                        new_node = child_node.clone();
+                        tree_changed = true;
+                    }
+                }
+                (Some(_), Some(_)) => {
+                    // Keep internal node with both children
+                }
+            }
+
+            if keep_node {
+                let new_index = new_nodes.len();
+                index_map.insert(old_index, new_index);
+                new_nodes.push(new_node);
+
+                if let Some(split_index) = node.split_index {
+                    if let Some(&feature_index) = self.feature_map.get(&split_index) {
+                        new_feature_map.insert(split_index, feature_index);
+                    }
+                }
             }
         }
 
-        // Remove inactive nodes and update child indices
-        let original_node_count = new_nodes.len();
-        let mut index_map = HashMap::new();
-        new_nodes = new_nodes
-            .into_iter()
-            .enumerate()
-            .filter_map(|(old_index, node)| {
-                if active_nodes[old_index] {
-                    let new_index = index_map.len();
-                    index_map.insert(old_index, new_index);
-                    Some(node)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        tree_changed = tree_changed || original_node_count != new_nodes.len();
-
-        // Update child indices
-        for node in new_nodes.iter_mut() {
+        for node in &mut new_nodes {
             if let Some(left_child) = node.left_child {
                 node.left_child = index_map.get(&left_child).copied();
             }
@@ -313,73 +261,32 @@ impl Tree {
             }
         }
 
-        // Update the feature map
-        let mut new_feature_map = HashMap::new();
-        for (split_index, feature_index) in &self.feature_map {
-            if new_nodes
-                .iter()
-                .any(|node| node.split_index == Some(*split_index))
-            {
-                new_feature_map.insert(*split_index, *feature_index);
-            }
-        }
+        debug!(
+            "Final node count after pruning and repairing: {}",
+            new_nodes.len()
+        );
 
-        let mut pruned_tree = Tree {
-            id: self.id,
-            tree_param: self.tree_param.clone(),
-            feature_map: self.feature_map.clone(),
-            nodes: new_nodes,
-        };
-
-        let tree_repaired = pruned_tree.repair();
-
-        if pruned_tree.nodes.is_empty() {
+        if new_nodes.is_empty() {
             debug!(
                 "All nodes were pruned from tree {}. Dropping the tree.",
                 self.id
             );
             None
-        } else if tree_changed || tree_repaired {
-            debug!(
-                "Tree structure changed after pruning/repairing. Keeping modified tree {}.",
-                self.id
-            );
-            Some(pruned_tree)
+        } else if tree_changed || new_nodes.len() != self.nodes.len() {
+            debug!("Tree structure changed. Keeping modified tree {}.", self.id);
+            Some(Tree {
+                id: self.id,
+                tree_param: self.tree_param.clone(),
+                feature_map: new_feature_map,
+                nodes: new_nodes,
+            })
         } else {
             debug!(
-                "No changes made to the tree structure during pruning/repairing for tree {}.",
+                "No changes made to the tree structure for tree {}.",
                 self.id
             );
-            Some(pruned_tree)
+            Some(self.clone())
         }
-    }
-
-    fn prune_subtree(
-        &self,
-        active_nodes: &mut Vec<bool>,
-        new_nodes: &mut Vec<Node>,
-        start_index: usize,
-    ) {
-        let mut stack = vec![start_index];
-        debug!("Starting to prune subtree from node {}", start_index);
-        while let Some(index) = stack.pop() {
-            active_nodes[index] = false;
-            debug!("Marking node {} as inactive", index);
-            if let Some(node) = new_nodes.get_mut(index) {
-                node.left_child = None;
-                node.right_child = None;
-                debug!("Removed children from node {}", index);
-                if let Some(left_child) = self.nodes[index].left_child {
-                    stack.push(left_child);
-                    debug!("Adding left child {} to pruning stack", left_child);
-                }
-                if let Some(right_child) = self.nodes[index].right_child {
-                    stack.push(right_child);
-                    debug!("Adding right child {} to pruning stack", right_child);
-                }
-            }
-        }
-        debug!("Finished pruning subtree from node {}", start_index);
     }
 }
 
@@ -455,43 +362,6 @@ impl Trees {
         }
     }
 
-    pub fn prune_with_debug(&self, predicate: &Predicate) -> Self {
-        info!("Starting pruning process");
-        debug!("Trees before pruning:");
-        self.print_all_trees();
-
-        let pruned_trees: Vec<Tree> = self
-            .trees
-            .iter()
-            .enumerate()
-            .filter_map(|(i, tree)| {
-                let pruned_tree = tree.prune(predicate, &self.feature_names);
-                debug!("Tree {} after pruning:", i);
-                match &pruned_tree {
-                    Some(t) => debug!("{:#?}", t),
-                    None => debug!("Tree completely pruned (None)"),
-                }
-                pruned_tree
-            })
-            .collect();
-
-        let result = Trees {
-            trees: pruned_trees,
-            feature_names: self.feature_names.clone(),
-            base_score: self.base_score,
-        };
-
-        debug!("Final pruned trees:");
-        result.print_all_trees();
-
-        info!(
-            "Pruning process completed. Trees reduced from {} to {}",
-            self.trees.len(),
-            result.trees.len()
-        );
-
-        result
-    }
     fn score_tree(&self, tree: &Tree, batch: &RecordBatch) -> Result<Vec<f64>, ArrowError> {
         let num_rows = batch.num_rows();
         let mut scores = vec![0.0; num_rows];
@@ -551,7 +421,7 @@ impl Trees {
         self.trees.iter().map(|tree| tree.depth()).collect()
     }
 
-    pub fn print_tree_info(&self, predicate: Option<&Predicate>) {
+    pub fn print_tree_info(&self) {
         println!("Total number of trees: {}", self.total_trees());
 
         let depths = self.tree_depths();
@@ -561,16 +431,5 @@ impl Trees {
             depths.iter().sum::<usize>() as f64 / depths.len() as f64
         );
         println!("Max tree depth: {}", depths.iter().max().unwrap_or(&0));
-    }
-    fn extract_features(&self, batch: &RecordBatch) -> Vec<Arc<dyn Array>> {
-        self.feature_names
-            .iter()
-            .filter_map(|name| {
-                batch.column_by_name(name).map(|col| match col.data_type() {
-                    DataType::Float64 => Arc::clone(col),
-                    _ => panic!("Unexpected data type for feature: {}", name),
-                })
-            })
-            .collect()
     }
 }

@@ -1,8 +1,6 @@
-use arrow::array::{BooleanArray, Float64Array, StringArray};
-use arrow::compute::filter_record_batch;
+use arrow::array::{Float64Array, StringArray};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
-use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use criterion::{criterion_group, criterion_main, Criterion};
 use rayon::prelude::*;
