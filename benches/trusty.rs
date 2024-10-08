@@ -32,8 +32,8 @@ fn run_prediction_with_predicates(
     batches: &[RecordBatch],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(60.0));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(10.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(10.0));
 
     let pruned_trees = trees.prune(&predicate);
 
@@ -71,6 +71,7 @@ fn run_prediction_with_gbdt(
 
     Ok(result)
 }
+
 fn read_csv_to_batches(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let file = File::open(path)?;
 

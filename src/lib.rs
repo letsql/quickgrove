@@ -18,25 +18,21 @@ enum NodeType {
     Internal,
 }
 
+const LEAF_NODE: i32 = -1;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct Node {
-    node_type: NodeType,
-    split_index: Option<i32>,
-    split_condition: Option<f64>,
-    default_left: Option<bool>,
-    left_child: Option<usize>,
-    right_child: Option<usize>,
+pub struct Node {
+    split_index: i32,  // LEAF_NODE for leaf nodes
+    split_condition: f64,
+    left_child: usize,
+    right_child: usize,
     weight: f64,
-    loss_change: f64,
-    sum_hessian: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tree {
-    id: i32,
-    tree_param: TreeParam,
-    feature_map: HashMap<i32, usize>,
     nodes: Vec<Node>,
+    feature_map: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,112 +59,79 @@ impl Predicate {
 }
 
 impl Tree {
+    pub fn new() -> Self {
+        Tree {
+            nodes: Vec::new(),
+            feature_map: Vec::new(),
+        }
+    }
     pub fn load(tree_dict: &serde_json::Value, feature_names: &[String]) -> Self {
-        let tree_param = TreeParam {
-            num_nodes: tree_dict["tree_param"]["num_nodes"]
-                .as_str()
-                .unwrap_or("0")
-                .to_string(),
-            size_leaf_vector: tree_dict["tree_param"]["size_leaf_vector"]
-                .as_str()
-                .unwrap_or("0")
-                .to_string(),
-            num_feature: tree_dict["tree_param"]["num_feature"]
-                .as_str()
-                .unwrap_or("0")
-                .to_string(),
-        };
+        let mut tree = Tree::new();
 
-        let feature_map: HashMap<i32, usize> = feature_names
-            .iter()
-            .enumerate()
-            .map(|(i, _)| (i as i32, i))
-            .collect();
-
-        let left_children: Vec<i32> = tree_dict["left_children"]
+        let split_indices: Vec<i32> = tree_dict["split_indices"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|x| x as i32))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as i32)).collect())
             .unwrap_or_default();
 
-        let right_children: Vec<i32> = tree_dict["right_children"]
+        let split_conditions: Vec<f64> = tree_dict["split_conditions"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|x| x as i32))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_default();
 
-        let mut nodes = Vec::with_capacity(left_children.len());
+        let left_children: Vec<usize> = tree_dict["left_children"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as usize)).collect())
+            .unwrap_or_default();
+
+        let right_children: Vec<usize> = tree_dict["right_children"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as usize)).collect())
+            .unwrap_or_default();
+
+        let weights: Vec<f64> = tree_dict["base_weights"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
+            .unwrap_or_default();
 
         for i in 0..left_children.len() {
-            let node_type = if left_children[i] == -1 && right_children[i] == -1 {
-                NodeType::Leaf
-            } else {
-                NodeType::Internal
-            };
-
             let node = Node {
-                node_type: node_type.clone(),
-                split_index: if node_type == NodeType::Internal {
-                    tree_dict["split_indices"][i].as_i64().map(|x| x as i32)
-                } else {
-                    None
-                },
-                split_condition: if node_type == NodeType::Internal {
-                    tree_dict["split_conditions"][i].as_f64()
-                } else {
-                    None
-                },
-                default_left: if node_type == NodeType::Internal {
-                    tree_dict["default_left"][i].as_bool()
-                } else {
-                    None
-                },
-                left_child: if node_type == NodeType::Internal {
-                    Some(left_children[i] as usize)
-                } else {
-                    None
-                },
-                right_child: if node_type == NodeType::Internal {
-                    Some(right_children[i] as usize)
-                } else {
-                    None
-                },
-                weight: tree_dict["base_weights"][i].as_f64().unwrap_or(0.0),
-                loss_change: tree_dict["loss_changes"][i].as_f64().unwrap_or(0.0),
-                sum_hessian: tree_dict["sum_hessian"][i].as_f64().unwrap_or(0.0),
+                split_index: if left_children[i] == usize::MAX { LEAF_NODE } else { split_indices[i] },
+                split_condition: split_conditions.get(i).cloned().unwrap_or(0.0),
+                left_child: left_children[i],
+                right_child: right_children[i],
+                weight: weights.get(i).cloned().unwrap_or(0.0),
             };
-
-            nodes.push(node);
+            tree.nodes.push(node);
         }
 
-        Tree {
-            id: tree_dict["id"].as_i64().map(|x| x as i32).unwrap_or(0),
-            tree_param,
-            feature_map,
-            nodes,
+        tree.feature_map = feature_names.iter().enumerate().map(|(i, _)| i).collect();
+
+        tree
+    }
+
+    pub fn predict(&self, features: &[f64]) -> f64 {
+        let mut node_index = 0;
+        loop {
+            let node = &self.nodes[node_index];
+            if node.split_index == LEAF_NODE {
+                return node.weight;
+            }
+            let feature_value = features[self.feature_map[node.split_index as usize]];
+            node_index = if feature_value < node.split_condition {
+                node.left_child
+            } else {
+                node.right_child
+            };
         }
     }
 
     fn depth(&self) -> usize {
         fn recursive_depth(nodes: &[Node], node_index: usize) -> usize {
             let node = &nodes[node_index];
-            match node.node_type {
-                NodeType::Leaf => 1,
-                NodeType::Internal => {
-                    let left_depth = node
-                        .left_child
-                        .map_or(0, |left| recursive_depth(nodes, left));
-                    let right_depth = node
-                        .right_child
-                        .map_or(0, |right| recursive_depth(nodes, right));
-                    1 + left_depth.max(right_depth)
-                }
+            if node.split_index == LEAF_NODE {
+                1
+            } else {
+                1 + recursive_depth(nodes, node.left_child).max(recursive_depth(nodes, node.right_child))
             }
         }
 
@@ -177,41 +140,36 @@ impl Tree {
 
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
         let mut new_nodes = Vec::new();
-        let mut new_feature_map = HashMap::new();
         let mut index_map = HashMap::new();
         let mut tree_changed = false;
 
-        debug!("Starting pruning for tree {}", self.id);
+        debug!("Starting pruning for tree");
         debug!("Initial node count: {}", self.nodes.len());
 
         for (old_index, node) in self.nodes.iter().enumerate() {
-            let keep_node = true;
             let mut new_node = node.clone();
 
-            if let (Some(split_index), Some(split_condition)) =
-                (node.split_index, node.split_condition)
-            {
-                if let Some(&feature_index) = self.feature_map.get(&split_index) {
-                    if let Some(feature_name) = feature_names.get(feature_index) {
-                        if let Some(condition) = predicate.conditions.get(feature_name) {
-                            debug!(
-                                "Evaluating node {} on feature '{}' with split condition {}",
-                                old_index, feature_name, split_condition
-                            );
-                            match condition {
-                                Condition::LessThan(value) => {
-                                    if *value < split_condition {
-                                        debug!("Pruning right subtree of node {}", old_index);
-                                        new_node.right_child = None;
-                                        tree_changed = true;
-                                    }
+            if node.split_index != LEAF_NODE {
+                let feature_index = self.feature_map[node.split_index as usize];
+                if let Some(feature_name) = feature_names.get(feature_index) {
+                    if let Some(condition) = predicate.conditions.get(feature_name) {
+                        debug!(
+                            "Evaluating node {} on feature '{}' with split condition {}",
+                            old_index, feature_name, node.split_condition
+                        );
+                        match condition {
+                            Condition::LessThan(value) => {
+                                if *value < node.split_condition {
+                                    debug!("Pruning right subtree of node {}", old_index);
+                                    new_node.right_child = usize::MAX;
+                                    tree_changed = true;
                                 }
-                                Condition::GreaterThanOrEqual(value) => {
-                                    if *value >= split_condition {
-                                        debug!("Pruning left subtree of node {}", old_index);
-                                        new_node.left_child = None;
-                                        tree_changed = true;
-                                    }
+                            }
+                            Condition::GreaterThanOrEqual(value) => {
+                                if *value >= node.split_condition {
+                                    debug!("Pruning left subtree of node {}", old_index);
+                                    new_node.left_child = usize::MAX;
+                                    tree_changed = true;
                                 }
                             }
                         }
@@ -219,45 +177,29 @@ impl Tree {
                 }
             }
 
-            match (new_node.left_child, new_node.right_child) {
-                (None, None) => {
-                    if new_node.node_type == NodeType::Internal {
-                        debug!("Converting internal node {} to leaf", old_index);
-                        new_node.node_type = NodeType::Leaf;
-                        tree_changed = true;
-                    }
-                }
-                (Some(child), None) | (None, Some(child)) => {
-                    debug!("Replacing node {} with its only child", old_index);
-                    if let Some(child_node) = self.nodes.get(child) {
-                        new_node = child_node.clone();
-                        tree_changed = true;
-                    }
-                }
-                (Some(_), Some(_)) => {
-                    // Keep internal node with both children
-                }
+            if new_node.left_child == usize::MAX && new_node.right_child == usize::MAX {
+                debug!("Converting internal node {} to leaf", old_index);
+                new_node.split_index = LEAF_NODE;
+                tree_changed = true;
+            } else if new_node.left_child == usize::MAX {
+                debug!("Replacing node {} with its right child", old_index);
+                new_node = self.nodes[new_node.right_child].clone();
+                tree_changed = true;
+            } else if new_node.right_child == usize::MAX {
+                debug!("Replacing node {} with its left child", old_index);
+                new_node = self.nodes[new_node.left_child].clone();
+                tree_changed = true;
             }
 
-            if keep_node {
-                let new_index = new_nodes.len();
-                index_map.insert(old_index, new_index);
-                new_nodes.push(new_node);
-
-                if let Some(split_index) = node.split_index {
-                    if let Some(&feature_index) = self.feature_map.get(&split_index) {
-                        new_feature_map.insert(split_index, feature_index);
-                    }
-                }
-            }
+            let new_index = new_nodes.len();
+            index_map.insert(old_index, new_index);
+            new_nodes.push(new_node);
         }
 
         for node in &mut new_nodes {
-            if let Some(left_child) = node.left_child {
-                node.left_child = index_map.get(&left_child).copied();
-            }
-            if let Some(right_child) = node.right_child {
-                node.right_child = index_map.get(&right_child).copied();
+            if node.split_index != LEAF_NODE {
+                node.left_child = *index_map.get(&node.left_child).unwrap_or(&usize::MAX);
+                node.right_child = *index_map.get(&node.right_child).unwrap_or(&usize::MAX);
             }
         }
 
@@ -267,24 +209,16 @@ impl Tree {
         );
 
         if new_nodes.is_empty() {
-            debug!(
-                "All nodes were pruned from tree {}. Dropping the tree.",
-                self.id
-            );
+            debug!("All nodes were pruned from the tree. Dropping the tree.");
             None
         } else if tree_changed || new_nodes.len() != self.nodes.len() {
-            debug!("Tree structure changed. Keeping modified tree {}.", self.id);
+            debug!("Tree structure changed. Keeping modified tree.");
             Some(Tree {
-                id: self.id,
-                tree_param: self.tree_param.clone(),
-                feature_map: new_feature_map,
                 nodes: new_nodes,
+                feature_map: self.feature_map.clone(),
             })
         } else {
-            debug!(
-                "No changes made to the tree structure for tree {}.",
-                self.id
-            );
+            debug!("No changes made to the tree structure.");
             Some(self.clone())
         }
     }
@@ -297,6 +231,7 @@ pub struct Trees {
     feature_names: Vec<String>,
 }
 
+
 impl Trees {
     pub fn load(model_data: &serde_json::Value) -> Self {
         let base_score = model_data["learner"]["learner_model_param"]["base_score"]
@@ -306,20 +241,12 @@ impl Trees {
 
         let feature_names: Vec<String> = model_data["learner"]["feature_names"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
         let trees: Vec<Tree> = model_data["learner"]["gradient_booster"]["model"]["trees"]
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|tree_data| Tree::load(tree_data, &feature_names))
-                    .collect()
-            })
+            .map(|arr| arr.iter().map(|tree_data| Tree::load(tree_data, &feature_names)).collect())
             .unwrap_or_default();
 
         Trees {
@@ -332,63 +259,24 @@ impl Trees {
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
         let mut scores = vec![self.base_score; num_rows];
-    
+
         let feature_columns: Vec<&Float64Array> = self.feature_names
             .iter()
             .map(|name| {
                 batch.column_by_name(name)
                     .and_then(|col| col.as_any().downcast_ref::<Float64Array>())
-                    .ok_or_else(|| ArrowError::InvalidArgumentError("Missing or invalid feature column".to_string()))
+                    .ok_or_else(|| ArrowError::InvalidArgumentError(format!("Missing or invalid feature column: {}", name)))
             })
             .collect::<Result<Vec<_>, _>>()?;
-    
-        for tree in &self.trees {
-            for row in 0..num_rows {
-                scores[row] += self.score_tree_single_row(tree, &feature_columns, row);
+
+        for row in 0..num_rows {
+            let features: Vec<f64> = feature_columns.iter().map(|col| col.value(row)).collect();
+            for tree in &self.trees {
+                scores[row] += tree.predict(&features);
             }
         }
-    
+
         Ok(Float64Array::from(scores))
-    }
-    
-    fn score_tree_single_row(&self, tree: &Tree, feature_columns: &[&Float64Array], row: usize) -> f64 {
-        let mut node_index = 0;
-        loop {
-            let node = &tree.nodes[node_index];
-            match node.node_type {
-                NodeType::Leaf => return node.weight,
-                NodeType::Internal => {
-                    let split_index = node.split_index.unwrap() as usize;
-                    let split_condition = node.split_condition.unwrap();
-                    let feature_value = feature_columns[tree.feature_map[&(split_index as i32)]].value(row);
-                    node_index = if feature_value < split_condition {
-                        node.left_child.unwrap()
-                    } else {
-                        node.right_child.unwrap()
-                    };
-                }
-            }
-        }
-    }
-
-    pub fn prune(&self, predicate: &Predicate) -> Self {
-        let pruned_trees: Vec<Tree> = self
-            .trees
-            .iter()
-            .filter_map(|tree| tree.prune(predicate, &self.feature_names))
-            .collect();
-
-        Trees {
-            trees: pruned_trees,
-            feature_names: self.feature_names.clone(),
-            base_score: self.base_score,
-        }
-    }
-
-    pub fn print_all_trees(&self) {
-        for (i, tree) in self.trees.iter().enumerate() {
-            debug!("Tree {}: {:#?}", i, tree);
-        }
     }
 
     pub fn total_trees(&self) -> usize {
@@ -396,8 +284,32 @@ impl Trees {
     }
 
     pub fn tree_depths(&self) -> Vec<usize> {
-        self.trees.iter().map(|tree| tree.depth()).collect()
+        self.trees.iter().map(|tree| {
+            fn depth(nodes: &[Node], index: usize) -> usize {
+                let node = &nodes[index];
+                if node.split_index == LEAF_NODE {
+                    1
+                } else {
+                    1 + depth(nodes, node.left_child).max(depth(nodes, node.right_child))
+                }
+            }
+            depth(&tree.nodes, 0)
+        }).collect()
     }
+    pub fn prune(&self, predicate: &Predicate) -> Self {
+        let pruned_trees: Vec<Tree> = self
+            .trees
+            .iter()
+            .filter_map(|tree| tree.prune(predicate, &self.feature_names))
+            .collect();
+    
+        Trees {
+            trees: pruned_trees,
+            feature_names: self.feature_names.clone(),
+            base_score: self.base_score,
+        }
+    }
+
 
     pub fn print_tree_info(&self) {
         println!("Total number of trees: {}", self.total_trees());
