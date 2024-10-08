@@ -89,7 +89,7 @@ fn read_csv_to_batches(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>
     ]));
 
     let mut csv = ReaderBuilder::new(schema)
-        .has_header(true)
+        .with_header(true)
         .with_batch_size(batch_size)
         .build(file)?;
 
@@ -131,18 +131,18 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
     let mut processed_batches = Vec::new();
 
     for batch in batches {
-        let carat = batch
-            .column_by_name("carat")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
-        let depth = batch
-            .column_by_name("depth")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
+        // let carat = batch
+        //     .column_by_name("carat")
+        //     .unwrap()
+        //     .as_any()
+        //     .downcast_ref::<Float64Array>()
+        //     .unwrap();
+        // let depth = batch
+        //     .column_by_name("depth")
+        //     .unwrap()
+        //     .as_any()
+        //     .downcast_ref::<Float64Array>()
+        //     .unwrap();
 
         // let mask: Vec<bool> = carat.iter().zip(depth.iter())
         //     .map(|(c, d)| c.map(|c| c >= 0.2).unwrap_or(false) && d.map(|d| d < 61.0).unwrap_or(false))
