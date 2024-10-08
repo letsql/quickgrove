@@ -1,31 +1,37 @@
-use rayon::prelude::*;
-use arrow::array::{Float64Array, StringArray, BooleanArray};
+use arrow::array::{BooleanArray, Float64Array, StringArray};
+use arrow::compute::filter_record_batch;
 use arrow::csv::ReaderBuilder;
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use trusty::{Trees, Predicate, Condition};
 use criterion::{criterion_group, criterion_main, Criterion};
-use tokio::runtime::Runtime;
+use rayon::prelude::*;
+use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use arrow::datatypes::{DataType, Field, Schema};
-use serde_json::Value;
-use arrow::compute::filter_record_batch;
-use arrow::error::ArrowError;
+use tokio::runtime::Runtime;
+use trusty::{Condition, Predicate, Trees};
 
 use std::error::Error;
 
-fn run_prediction(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_prediction(
+    trees: &Trees,
+    batches: &[RecordBatch],
+) -> Result<(), Box<dyn std::error::Error>> {
     batches.par_iter().for_each(|batch| {
         let _prediction = trees.predict_batch(batch);
     });
     Ok(())
 }
 
-fn run_prediction_with_predicates(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
+fn run_prediction_with_predicates(
+    trees: &Trees,
+    batches: &[RecordBatch],
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut predicate = Predicate::new();
     predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(61.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(60.0));
 
     let pruned_trees = trees.prune(&predicate);
 
@@ -94,28 +100,83 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
 
     for batch in batches {
         // Apply predicates
-        let carat = batch.column_by_name("carat").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let depth = batch.column_by_name("depth").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        
+        let carat = batch
+            .column_by_name("carat")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let depth = batch
+            .column_by_name("depth")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
         // let mask: Vec<bool> = carat.iter().zip(depth.iter())
         //     .map(|(c, d)| c.map(|c| c >= 0.2).unwrap_or(false) && d.map(|d| d < 61.0).unwrap_or(false))
         //     .collect();
-        // 
+        //
         // let boolean_mask = BooleanArray::from(mask);
-        
+
         // Filter the record batch
         // let filtered_batch = filter_record_batch(batch, &boolean_mask)?;
         let filtered_batch = batch;
 
-        let carat = filtered_batch.column_by_name("carat").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let cut = filtered_batch.column_by_name("cut").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
-        let color = filtered_batch.column_by_name("color").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
-        let clarity = filtered_batch.column_by_name("clarity").unwrap().as_any().downcast_ref::<StringArray>().unwrap();
-        let depth = filtered_batch.column_by_name("depth").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let table = filtered_batch.column_by_name("table").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let x = filtered_batch.column_by_name("x").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let y = filtered_batch.column_by_name("y").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
-        let z = filtered_batch.column_by_name("z").unwrap().as_any().downcast_ref::<Float64Array>().unwrap();
+        let carat = filtered_batch
+            .column_by_name("carat")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let cut = filtered_batch
+            .column_by_name("cut")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let color = filtered_batch
+            .column_by_name("color")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let clarity = filtered_batch
+            .column_by_name("clarity")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let depth = filtered_batch
+            .column_by_name("depth")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let table = filtered_batch
+            .column_by_name("table")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let x = filtered_batch
+            .column_by_name("x")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let y = filtered_batch
+            .column_by_name("y")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let z = filtered_batch
+            .column_by_name("z")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
 
         let row_count = carat.len();
 
@@ -205,38 +266,42 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
     Ok(processed_batches)
 }
 
-
 fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
-    
+
     let model_file = File::open("models/pricing-model-100-mod.json")
         .or_else(|_| File::open("../models/pricing-model-100-mod.json"))
         .map_err(|e| format!("Failed to open model file: {}", e))?;
-    
+
     let reader = BufReader::new(model_file);
-    let model_data: Value = serde_json::from_reader(reader)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-    
+    let model_data: Value =
+        serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
     let trees = Trees::load(&model_data);
 
     let raw_batches = read_csv_to_batches("diamonds.csv", 1024)?;
     let preprocessed_batches = preprocess_batches(&raw_batches)?;
-    println!("Raw batches total rows: {}", raw_batches.iter().map(|b| b.num_rows()).sum::<usize>());
-    println!("Preprocessed batches total rows: {}", preprocessed_batches.iter().map(|b| b.num_rows()).sum::<usize>());
+    println!(
+        "Raw batches total rows: {}",
+        raw_batches.iter().map(|b| b.num_rows()).sum::<usize>()
+    );
+    println!(
+        "Preprocessed batches total rows: {}",
+        preprocessed_batches
+            .iter()
+            .map(|b| b.num_rows())
+            .sum::<usize>()
+    );
 
-
-    c.bench_function("trusty_preprocessed_predicates", |b| {
+    c.bench_function("trusty_no_pruning", |b| {
         b.to_async(&rt)
-            .iter(|| async { 
-                run_prediction(&trees, &preprocessed_batches).unwrap() 
-            })
+            .iter(|| async { run_prediction(&trees, &preprocessed_batches).unwrap() })
     });
 
-    c.bench_function("trusty_tree_predicates", |b| {
-        b.to_async(&rt)
-            .iter(|| async { 
-                run_prediction_with_predicates(&trees, &preprocessed_batches).unwrap() 
-            })
+    c.bench_function("trusty_with_pruning", |b| {
+        b.to_async(&rt).iter(|| async {
+            run_prediction_with_predicates(&trees, &preprocessed_batches).unwrap()
+        })
     });
 
     Ok(())
