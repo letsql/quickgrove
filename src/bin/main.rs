@@ -8,6 +8,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
+use gbdt::decision_tree::Data;
+use gbdt::gradient_boost::GBDT;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Loading model data");
@@ -111,5 +113,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pruned_trees.print_tree_info();
     let predictions = pruned_trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
+    let gbdt_trees = GBDT::from_xgboost_json_used_feature("models/pricing-model-100-mod.json")?;
+    let mut result = Vec::new();
+    for row in 0..batch.num_rows() {
+        let mut row_data = Vec::new();
+        for col in batch.columns() {
+            if let Some(array) = col.as_any().downcast_ref::<Float64Array>() {
+                row_data.push(array.value(row));
+            }
+        }
+        result.push(Data::new_test_data(row_data, None));
+    }
+    
+    let predictions = gbdt_trees.predict(&result);
+    println!("Predictions (gbdt): {:?}", predictions);
+    
     Ok(())
 }

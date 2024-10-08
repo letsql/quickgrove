@@ -330,16 +330,45 @@ impl Trees {
     }
 
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
-        let mut scores = vec![self.base_score; batch.num_rows()];
-
+        let num_rows = batch.num_rows();
+        let mut scores = vec![self.base_score; num_rows];
+    
+        let feature_columns: Vec<&Float64Array> = self.feature_names
+            .iter()
+            .map(|name| {
+                batch.column_by_name(name)
+                    .and_then(|col| col.as_any().downcast_ref::<Float64Array>())
+                    .ok_or_else(|| ArrowError::InvalidArgumentError("Missing or invalid feature column".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    
         for tree in &self.trees {
-            let tree_scores = self.score_tree(tree, batch)?;
-            for (i, &tree_score) in tree_scores.iter().enumerate() {
-                scores[i] += tree_score;
+            for row in 0..num_rows {
+                scores[row] += self.score_tree_single_row(tree, &feature_columns, row);
             }
         }
-
+    
         Ok(Float64Array::from(scores))
+    }
+    
+    fn score_tree_single_row(&self, tree: &Tree, feature_columns: &[&Float64Array], row: usize) -> f64 {
+        let mut node_index = 0;
+        loop {
+            let node = &tree.nodes[node_index];
+            match node.node_type {
+                NodeType::Leaf => return node.weight,
+                NodeType::Internal => {
+                    let split_index = node.split_index.unwrap() as usize;
+                    let split_condition = node.split_condition.unwrap();
+                    let feature_value = feature_columns[tree.feature_map[&(split_index as i32)]].value(row);
+                    node_index = if feature_value < split_condition {
+                        node.left_child.unwrap()
+                    } else {
+                        node.right_child.unwrap()
+                    };
+                }
+            }
+        }
     }
 
     pub fn prune(&self, predicate: &Predicate) -> Self {
@@ -360,57 +389,6 @@ impl Trees {
         for (i, tree) in self.trees.iter().enumerate() {
             debug!("Tree {}: {:#?}", i, tree);
         }
-    }
-
-    fn score_tree(&self, tree: &Tree, batch: &RecordBatch) -> Result<Vec<f64>, ArrowError> {
-        let num_rows = batch.num_rows();
-        let mut scores = vec![0.0; num_rows];
-
-        for row in 0..num_rows {
-            let mut node_index = 0;
-            loop {
-                let node = &tree.nodes[node_index];
-                match node.node_type {
-                    NodeType::Leaf => {
-                        scores[row] = node.weight;
-                        break;
-                    }
-                    NodeType::Internal => {
-                        if let (Some(split_index), Some(split_condition)) =
-                            (node.split_index, node.split_condition)
-                        {
-                            if let Some(&feature_index) = tree.feature_map.get(&split_index) {
-                                if let Some(feature_column) = batch
-                                    .column(feature_index)
-                                    .as_any()
-                                    .downcast_ref::<Float64Array>()
-                                {
-                                    let feature_value = feature_column.value(row);
-                                    node_index = if feature_value < split_condition {
-                                        node.left_child.unwrap()
-                                    } else {
-                                        node.right_child.unwrap()
-                                    };
-                                } else {
-                                    return Err(ArrowError::InvalidArgumentError(
-                                        "Unexpected column type".to_string(),
-                                    ));
-                                }
-                            } else {
-                                return Err(ArrowError::InvalidArgumentError(
-                                    "Feature index not found".to_string(),
-                                ));
-                            }
-                        } else {
-                            return Err(ArrowError::InvalidArgumentError(
-                                "Invalid tree structure".to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(scores)
     }
 
     pub fn total_trees(&self) -> usize {

@@ -10,6 +10,10 @@ use std::io::BufReader;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
+use gbdt::decision_tree::Data;
+use gbdt::gradient_boost::GBDT;
+use arrow::array::ArrayRef;
+
 
 use std::error::Error;
 
@@ -37,6 +41,35 @@ fn run_prediction_with_predicates(
         let _prediction = pruned_trees.predict_batch(batch);
     });
     Ok(())
+}
+
+fn run_prediction_with_gbdt(
+    model: &GBDT,
+    batches: &[RecordBatch],
+) -> Result<Vec<RecordBatch>, Box<dyn std::error::Error>> {
+    let schema = Arc::new(Schema::new(vec![Field::new("prediction", DataType::Float64, false)]));
+
+    let result: Vec<RecordBatch> = batches
+        .par_iter()
+        .map(|batch| {
+            let mut result = Vec::new();
+            for row in 0..batch.num_rows() {
+                let mut row_data = Vec::new();
+                for col in batch.columns() {
+                    if let Some(array) = col.as_any().downcast_ref::<Float64Array>() {
+                        row_data.push(array.value(row));
+                    }
+                }
+                result.push(Data::new_test_data(row_data, None));
+            }
+            let predictions = model.predict(&result);
+            
+            let prediction_array: ArrayRef = Arc::new(Float64Array::from(predictions));
+            RecordBatch::try_new(schema.clone(), vec![prediction_array]).unwrap()
+        })
+        .collect();
+
+    Ok(result)
 }
 fn read_csv_to_batches(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let file = File::open(path)?;
@@ -97,7 +130,6 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
     let mut processed_batches = Vec::new();
 
     for batch in batches {
-        // Apply predicates
         let carat = batch
             .column_by_name("carat")
             .unwrap()
@@ -305,5 +337,34 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-criterion_group!(benches, bench_trusty);
+fn bench_gbdt(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
+    let rt = Runtime::new()?;
+
+    let model_path = "models/pricing-model-100-mod.json";
+    let model = GBDT::from_xgboost_json_used_feature(model_path)
+        .expect("failed to load model");
+
+    let raw_batches = read_csv_to_batches("diamonds.csv", 1024)?;
+    let preprocessed_batches = preprocess_batches(&raw_batches)?;
+    println!(
+        "Raw batches total rows: {}",
+        raw_batches.iter().map(|b| b.num_rows()).sum::<usize>()
+    );
+    println!(
+        "Preprocessed batches total rows: {}",
+        preprocessed_batches
+            .iter()
+            .map(|b| b.num_rows())
+            .sum::<usize>()
+    );
+
+    c.bench_function("gbdt_prediction", |b| {
+        b.to_async(&rt)
+            .iter(|| async { run_prediction_with_gbdt(&model, &preprocessed_batches).unwrap() })
+    });
+
+    Ok(())
+}
+
+criterion_group!(benches, bench_trusty,bench_gbdt);
 criterion_main!(benches);
