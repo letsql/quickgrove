@@ -12,8 +12,8 @@ const LEAF_NODE: i32 = -1;
 pub struct Node {
     split_index: i32,  // LEAF_NODE for leaf nodes
     split_condition: f64,
-    left_child: usize,
-    right_child: usize,
+    left_child: u32,
+    right_child: u32,
     weight: f64,
 }
 
@@ -67,14 +67,14 @@ impl Tree {
             .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_default();
 
-        let left_children: Vec<usize> = tree_dict["left_children"]
+        let left_children: Vec<u32> = tree_dict["left_children"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as usize)).collect())
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as u32)).collect())
             .unwrap_or_default();
 
-        let right_children: Vec<usize> = tree_dict["right_children"]
+        let right_children: Vec<u32> = tree_dict["right_children"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as usize)).collect())
+            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as u32)).collect())
             .unwrap_or_default();
 
         let weights: Vec<f64> = tree_dict["base_weights"]
@@ -84,7 +84,7 @@ impl Tree {
 
         for i in 0..left_children.len() {
             let node = Node {
-                split_index: if left_children[i] == usize::MAX { LEAF_NODE } else { split_indices[i] },
+                split_index: if left_children[i] == u32::MAX { LEAF_NODE } else { split_indices[i] },
                 split_condition: split_conditions.get(i).cloned().unwrap_or(0.0),
                 left_child: left_children[i],
                 right_child: right_children[i],
@@ -107,16 +107,16 @@ impl Tree {
             }
             let feature_value = features[self.feature_offset + node.split_index as usize];
             node_index = if feature_value < node.split_condition {
-                node.left_child
+                node.left_child as usize
             } else {
-                node.right_child
+                node.right_child as usize
             };
         }
     }
 
     fn depth(&self) -> usize {
-        fn recursive_depth(nodes: &[Node], node_index: usize) -> usize {
-            let node = &nodes[node_index];
+        fn recursive_depth(nodes: &[Node], node_index: u32) -> usize {
+            let node = &nodes[node_index as usize];
             if node.split_index == LEAF_NODE {
                 1
             } else {
@@ -148,16 +148,16 @@ impl Tree {
                         );
                         match condition {
                             Condition::LessThan(value) => {
-                                if *value < node.split_condition {
+                                if *value <= node.split_condition {
                                     debug!("Pruning right subtree of node {}", old_index);
-                                    new_node.right_child = usize::MAX;
+                                    new_node.right_child = u32::MAX;
                                     tree_changed = true;
                                 }
                             }
                             Condition::GreaterThanOrEqual(value) => {
-                                if *value >= node.split_condition {
+                                if *value > node.split_condition {
                                     debug!("Pruning left subtree of node {}", old_index);
-                                    new_node.left_child = usize::MAX;
+                                    new_node.left_child = u32::MAX;
                                     tree_changed = true;
                                 }
                             }
@@ -166,29 +166,29 @@ impl Tree {
                 }
             }
 
-            if new_node.left_child == usize::MAX && new_node.right_child == usize::MAX {
+            if new_node.left_child == u32::MAX && new_node.right_child == u32::MAX {
                 debug!("Converting internal node {} to leaf", old_index);
                 new_node.split_index = LEAF_NODE;
                 tree_changed = true;
-            } else if new_node.left_child == usize::MAX {
+            } else if new_node.left_child == u32::MAX {
                 debug!("Replacing node {} with its right child", old_index);
-                new_node = self.nodes[new_node.right_child].clone();
+                new_node = self.nodes[new_node.right_child as usize].clone();
                 tree_changed = true;
-            } else if new_node.right_child == usize::MAX {
+            } else if new_node.right_child == u32::MAX {
                 debug!("Replacing node {} with its left child", old_index);
-                new_node = self.nodes[new_node.left_child].clone();
+                new_node = self.nodes[new_node.left_child as usize].clone();
                 tree_changed = true;
             }
 
-            let new_index = new_nodes.len();
-            index_map.insert(old_index, new_index);
+            let new_index = new_nodes.len() as u32;
+            index_map.insert(old_index as u32, new_index);
             new_nodes.push(new_node);
         }
 
         for node in &mut new_nodes {
             if node.split_index != LEAF_NODE {
-                node.left_child = *index_map.get(&node.left_child).unwrap_or(&usize::MAX);
-                node.right_child = *index_map.get(&node.right_child).unwrap_or(&usize::MAX);
+                node.left_child = *index_map.get(&node.left_child).unwrap_or(&u32::MAX);
+                node.right_child = *index_map.get(&node.right_child).unwrap_or(&u32::MAX);
             }
         }
 
@@ -223,7 +223,6 @@ pub struct Trees {
 
 impl Trees {
     pub fn load(model_data: &serde_json::Value) -> Self {
-
         let base_score = model_data["learner"]["learner_model_param"]["base_score"]
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
@@ -249,7 +248,8 @@ impl Trees {
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
         let mut scores = vec![self.base_score; num_rows];
-
+        let mut features = vec![0.0; self.feature_names.len()];
+    
         let feature_columns: Vec<&Float64Array> = self.feature_names
             .iter()
             .map(|name| {
@@ -258,14 +258,16 @@ impl Trees {
                     .ok_or_else(|| ArrowError::InvalidArgumentError(format!("Missing or invalid feature column: {}", name)))
             })
             .collect::<Result<Vec<_>, _>>()?;
-
+    
         for row in 0..num_rows {
-            let features: Vec<f64> = feature_columns.iter().map(|col| col.value(row)).collect();
+            for (i, col) in feature_columns.iter().enumerate() {
+                features[i] = col.value(row);
+            }
             for tree in &self.trees {
                 scores[row] += tree.predict(&features);
             }
         }
-
+    
         Ok(Float64Array::from(scores))
     }
 

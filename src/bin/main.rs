@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let predictions = trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(10.0));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(62.0));
     println!("\nWith pruning:");
     let pruned_trees = trees.prune(&predicate);
