@@ -1,5 +1,5 @@
 {
-  description = "A devShell example with Crane for Cargo builds";
+  description = "A devShell with Crane for Cargo builds for trusty";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -15,17 +15,18 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        rustToolchain = pkgs.rust-bin.beta.latest.default;
-        craneLib = crane.mkLib pkgs;
 
-        # Common derivation arguments used for all builds
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+
         commonArgs = {
           src = craneLib.cleanCargoSource ./.;
           strictDeps = true;
 
           buildInputs = with pkgs; [
-            openssl
-            libiconv
+            openssl] ++ lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.libiconv
+              pkgs.darwin.apple_sdk.frameworks.Security
           ];
 
           nativeBuildInputs = with pkgs; [
@@ -33,29 +34,27 @@
           ];
         };
 
-        # Build *just* the cargo dependencies, so we can reuse
-        # all of that work (e.g. via cachix) when running in CI
+        # Build *just* the cargo dependencies
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-        # Build the actual crate itself, reusing the dependency
-        # artifacts from above.
         trusty = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
         });
 
-        # Run clippy (and deny all warnings) on the crate source
         trustyClippy = craneLib.cargoClippy (commonArgs // {
           inherit cargoArtifacts;
           cargoClippyExtraArgs = "--all-targets -- --deny warnings";
         });
 
-        # Run the crate's tests
         trustyTests = craneLib.cargoTest (commonArgs // {
           inherit cargoArtifacts;
         });
+
       in
       {
-        packages.default = trusty;
+        packages = {
+          default = trusty;
+        };
 
         checks = {
           inherit
@@ -64,19 +63,9 @@
             trustyTests;
         };
 
-        devShells.default = pkgs.mkShell {
+        devShells.default = craneLib.devShell {
+          checks = self.checks.${system};
           inputsFrom = [ trusty ];
-          buildInputs = with pkgs; [
-            eza
-            fd
-            rustToolchain
-            libiconv
-          ];
-
-          shellHook = ''
-            alias ls=eza
-            alias find=fd
-          '';
         };
       });
 }
