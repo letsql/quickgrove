@@ -2,14 +2,14 @@ use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use env_logger::Env;
+use gbdt::decision_tree::Data;
+use gbdt::gradient_boost::GBDT;
 use log::debug;
 use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
-use gbdt::decision_tree::Data;
-use gbdt::gradient_boost::GBDT;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Loading model data");
@@ -124,9 +124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         result.push(Data::new_test_data(row_data, None));
     }
-    
+
     let predictions = gbdt_trees.predict(&result);
     println!("Predictions (gbdt): {:?}", predictions);
-    
+
     Ok(())
 }

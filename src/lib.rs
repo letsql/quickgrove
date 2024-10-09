@@ -5,12 +5,11 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
 const LEAF_NODE: i32 = -1;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Node {
-    split_index: i32,  // LEAF_NODE for leaf nodes
+    split_index: i32, // LEAF_NODE for leaf nodes
     split_condition: f64,
     left_child: u32,
     right_child: u32,
@@ -46,6 +45,12 @@ impl Predicate {
     }
 }
 
+impl Default for Predicate {
+    fn default() -> Self {
+        Predicate::new()
+    }
+}
+
 impl Tree {
     pub fn new() -> Self {
         Tree {
@@ -53,13 +58,17 @@ impl Tree {
             feature_offset: 0,
         }
     }
-    
+
     pub fn load(tree_dict: &serde_json::Value, feature_names: &[String]) -> Self {
         let mut tree = Tree::new();
 
         let split_indices: Vec<i32> = tree_dict["split_indices"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as i32)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_i64().map(|x| x as i32))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let split_conditions: Vec<f64> = tree_dict["split_conditions"]
@@ -69,12 +78,20 @@ impl Tree {
 
         let left_children: Vec<u32> = tree_dict["left_children"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as u32)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_i64().map(|x| x as u32))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let right_children: Vec<u32> = tree_dict["right_children"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|x| x as u32)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_i64().map(|x| x as u32))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let weights: Vec<f64> = tree_dict["base_weights"]
@@ -84,7 +101,11 @@ impl Tree {
 
         for i in 0..left_children.len() {
             let node = Node {
-                split_index: if left_children[i] == u32::MAX { LEAF_NODE } else { split_indices[i] },
+                split_index: if left_children[i] == u32::MAX {
+                    LEAF_NODE
+                } else {
+                    split_indices[i]
+                },
                 split_condition: split_conditions.get(i).cloned().unwrap_or(0.0),
                 left_child: left_children[i],
                 right_child: right_children[i],
@@ -93,7 +114,10 @@ impl Tree {
             tree.nodes.push(node);
         }
 
-        tree.feature_offset = feature_names.iter().position(|name| name == &feature_names[0]).unwrap_or(0);
+        tree.feature_offset = feature_names
+            .iter()
+            .position(|name| name == &feature_names[0])
+            .unwrap_or(0);
 
         tree
     }
@@ -120,7 +144,8 @@ impl Tree {
             if node.split_index == LEAF_NODE {
                 1
             } else {
-                1 + recursive_depth(nodes, node.left_child).max(recursive_depth(nodes, node.right_child))
+                1 + recursive_depth(nodes, node.left_child)
+                    .max(recursive_depth(nodes, node.right_child))
             }
         }
 
@@ -213,13 +238,18 @@ impl Tree {
     }
 }
 
+impl Default for Tree {
+    fn default() -> Self {
+        Tree::new()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Trees {
     base_score: f64,
     trees: Vec<Tree>,
     feature_names: Vec<String>,
 }
-
 
 impl Trees {
     pub fn load(model_data: &serde_json::Value) -> Self {
@@ -230,12 +260,20 @@ impl Trees {
 
         let feature_names: Vec<String> = model_data["learner"]["feature_names"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let trees: Vec<Tree> = model_data["learner"]["gradient_booster"]["model"]["trees"]
             .as_array()
-            .map(|arr| arr.iter().map(|tree_data| Tree::load(tree_data, &feature_names)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .map(|tree_data| Tree::load(tree_data, &feature_names))
+                    .collect()
+            })
             .unwrap_or_default();
 
         Trees {
@@ -249,16 +287,24 @@ impl Trees {
         let num_rows = batch.num_rows();
         let mut scores = vec![self.base_score; num_rows];
         let mut features = vec![0.0; self.feature_names.len()];
-    
-        let feature_columns: Vec<&Float64Array> = self.feature_names
+
+        let feature_columns: Vec<&Float64Array> = self
+            .feature_names
             .iter()
             .map(|name| {
-                batch.column_by_name(name)
+                batch
+                    .column_by_name(name)
                     .and_then(|col| col.as_any().downcast_ref::<Float64Array>())
-                    .ok_or_else(|| ArrowError::InvalidArgumentError(format!("Missing or invalid feature column: {}", name)))
+                    .ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "Missing or invalid feature column: {}",
+                            name
+                        ))
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
-    
+
+        #[allow(clippy::needless_range_loop)]
         for row in 0..num_rows {
             for (i, col) in feature_columns.iter().enumerate() {
                 features[i] = col.value(row);
@@ -267,7 +313,7 @@ impl Trees {
                 scores[row] += tree.predict(&features);
             }
         }
-    
+
         Ok(Float64Array::from(scores))
     }
 
@@ -285,7 +331,7 @@ impl Trees {
             .iter()
             .filter_map(|tree| tree.prune(predicate, &self.feature_names))
             .collect();
-    
+
         Trees {
             trees: pruned_trees,
             feature_names: self.feature_names.clone(),
