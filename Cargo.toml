@@ -18,6 +18,7 @@ gbdt = { git = "https://github.com/letsql/gbdt-rs.git", rev = "8262de1d20ab6dc7c
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports", "async_futures","async_tokio"] }
 tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros"] }
+approx = "0.5.1"
 
 [[bench]]
 name = "trusty"

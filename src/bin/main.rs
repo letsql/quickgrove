@@ -15,7 +15,6 @@ use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
 
-use approx::assert_abs_diff_eq;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Loading model data");
@@ -196,27 +195,6 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
     let mut processed_batches = Vec::new();
 
     for batch in batches {
-        // let carat = batch
-        //     .column_by_name("carat")
-        //     .unwrap()
-        //     .as_any()
-        //     .downcast_ref::<Float64Array>()
-        //     .unwrap();
-        // let depth = batch
-        //     .column_by_name("depth")
-        //     .unwrap()
-        //     .as_any()
-        //     .downcast_ref::<Float64Array>()
-        //     .unwrap();
-
-        // let mask: Vec<bool> = carat.iter().zip(depth.iter())
-        //     .map(|(c, d)| c.map(|c| c >= 0.2).unwrap_or(false) && d.map(|d| d < 61.0).unwrap_or(false))
-        //     .collect();
-        //
-        // let boolean_mask = BooleanArray::from(mask);
-
-        // Filter the record batch
-        // let filtered_batch = filter_record_batch(batch, &boolean_mask)?;
         let filtered_batch = batch;
 
         let carat = filtered_batch
@@ -398,6 +376,7 @@ fn run_prediction_with_gbdt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_abs_diff_eq;
 
     #[test]
     fn test_model_results() -> Result<(), Box<dyn Error>> {
@@ -431,7 +410,7 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
 
-            assert!(gbdt_array.len() > 0, "Empty predictions");
+            assert!(!gbdt_array.is_empty(), "Empty predictions");
 
             assert_eq!(
                 trusty_array.len(),

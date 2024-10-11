@@ -18,17 +18,28 @@
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        
+        customFilter = path: type:
+          let baseName = baseNameOf (toString path);
+          in
+          (craneLib.filterCargoSources path type) ||
+          (baseName == "diamonds.csv") ||
+          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null);
 
         commonArgs = {
-          src = craneLib.cleanCargoSource ./.;
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = customFilter;
+          };
           strictDeps = true;
-
+        
           buildInputs = with pkgs; [
-            openssl] ++ lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.libiconv
-              pkgs.darwin.apple_sdk.frameworks.Security
+            openssl
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+            pkgs.darwin.apple_sdk.frameworks.Security
           ];
-
+        
           nativeBuildInputs = with pkgs; [
             pkg-config
           ];
