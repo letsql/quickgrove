@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 const LEAF_NODE: i32 = -1;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Node {
     split_index: i32, // LEAF_NODE for leaf nodes
     split_condition: f64,
@@ -16,7 +16,7 @@ pub struct Node {
     weight: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Tree {
     nodes: Vec<Node>,
     feature_offset: usize,
@@ -152,6 +152,14 @@ impl Tree {
         recursive_depth(&self.nodes, 0)
     }
 
+    fn num_nodes(&self) -> usize {
+        // only count nodes that are not leaves
+        self.nodes
+            .iter()
+            .filter(|n| n.split_index != LEAF_NODE)
+            .count()
+    }
+
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
         let mut new_nodes = Vec::new();
         let mut index_map = HashMap::new();
@@ -173,14 +181,14 @@ impl Tree {
                         );
                         match condition {
                             Condition::LessThan(value) => {
-                                if *value <= node.split_condition {
+                                if *value < node.split_condition {
                                     debug!("Pruning right subtree of node {}", old_index);
                                     new_node.right_child = u32::MAX;
                                     tree_changed = true;
                                 }
                             }
                             Condition::GreaterThanOrEqual(value) => {
-                                if *value > node.split_condition {
+                                if *value >= node.split_condition {
                                     debug!("Pruning left subtree of node {}", old_index);
                                     new_node.left_child = u32::MAX;
                                     tree_changed = true;
@@ -217,11 +225,6 @@ impl Tree {
             }
         }
 
-        debug!(
-            "Final node count after pruning and repairing: {}",
-            new_nodes.len()
-        );
-
         if new_nodes.is_empty() {
             debug!("All nodes were pruned from the tree. Dropping the tree.");
             None
@@ -235,6 +238,63 @@ impl Tree {
             debug!("No changes made to the tree structure.");
             Some(self.clone())
         }
+    }
+
+    pub fn print_ascii(&self, feature_names: &[String]) {
+        fn print_node(
+            tree: &Tree,
+            node_index: usize,
+            prefix: &str,
+            is_left: bool,
+            feature_names: &[String],
+        ) {
+            if node_index >= tree.nodes.len() {
+                return;
+            }
+
+            let node = &tree.nodes[node_index];
+            let connector = if is_left { "├── " } else { "└── " };
+            println!(
+                "{}{}{}",
+                prefix,
+                connector,
+                node_to_string(node, tree, feature_names)
+            );
+
+            if node.split_index != LEAF_NODE {
+                let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
+                print_node(
+                    tree,
+                    node.left_child as usize,
+                    &new_prefix,
+                    true,
+                    feature_names,
+                );
+                print_node(
+                    tree,
+                    node.right_child as usize,
+                    &new_prefix,
+                    false,
+                    feature_names,
+                );
+            }
+        }
+
+        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
+            if node.split_index == LEAF_NODE {
+                format!("Leaf (weight: {:.4})", node.weight)
+            } else {
+                let feature_index = tree.feature_offset + node.split_index as usize;
+                let feature_name = feature_names
+                    .get(feature_index)
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                format!("{} < {:.4}", feature_name, node.split_condition)
+            }
+        }
+
+        println!("Tree ASCII Representation:");
+        print_node(self, 0, "", true, feature_names);
     }
 }
 
@@ -349,5 +409,315 @@ impl Trees {
             depths.iter().sum::<usize>() as f64 / depths.len() as f64
         );
         println!("Max tree depth: {}", depths.iter().max().unwrap_or(&0));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::Float64Array;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::Feature;
+    use arrow::record_batch::RecordBatch;
+    use std::sync::Arc;
+
+    fn create_sample_tree() -> Tree {
+        // Tree structure:
+        //     [0] (feature 0 < 0.5)
+        //    /   \
+        //  [1]   [2]
+        // (-1.0) (1.0)
+        let nodes = vec![
+            Node {
+                split_index: 0,
+                split_condition: 0.5,
+                left_child: 1,
+                right_child: 2,
+                weight: 0.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: -1.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: 1.0,
+            },
+        ];
+        Tree {
+            nodes,
+            feature_offset: 0,
+        }
+    }
+
+    #[test]
+    fn test_tree_predict() {
+        let tree = create_sample_tree();
+        assert_eq!(tree.predict(&[0.4]), -1.0);
+        assert_eq!(tree.predict(&[0.6]), 1.0);
+    }
+
+    #[test]
+    fn test_tree_depth() {
+        let tree = create_sample_tree();
+        assert_eq!(tree.depth(), 2);
+    }
+
+    #[test]
+    fn test_tree_prune() {
+        let tree = create_sample_tree();
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
+        let pruned_tree = tree.prune(&predicate, &["feature0".to_string()]).unwrap();
+        assert_eq!(pruned_tree.nodes.len(), tree.nodes.len());
+        assert_eq!(pruned_tree.nodes[0].left_child, 0);
+        assert_eq!(pruned_tree.nodes[1].weight, -1.0);
+    }
+
+    #[test]
+    fn test_tree_prune_deep() {
+        let tree = Tree {
+            nodes: vec![
+                Node {
+                    split_index: 0,
+                    split_condition: 0.5,
+                    left_child: 1,
+                    right_child: 2,
+                    weight: 0.0,
+                },
+                Node {
+                    split_index: 1,
+                    split_condition: 0.3,
+                    left_child: 3,
+                    right_child: 4,
+                    weight: 0.0,
+                },
+                Node {
+                    split_index: 2,
+                    split_condition: 0.7,
+                    left_child: 5,
+                    right_child: 6,
+                    weight: 0.0,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: -2.0,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: -1.0,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: 1.0,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: 2.0,
+                },
+            ],
+            feature_offset: 0,
+        };
+        let feature_names = [
+            "feature0".to_string(),
+            "feature1".to_string(),
+            "feature2".to_string(),
+        ];
+
+        // Test case 1: Prune right subtree of root
+        let mut predicate1 = Predicate::new();
+        predicate1.add_condition("feature1".to_string(), Condition::GreaterThanOrEqual(0.30));
+        let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
+
+        assert_eq!(pruned_tree1.num_nodes(), tree.num_nodes() - 1);
+        assert_eq!(pruned_tree1.nodes[1].left_child, 0);
+        assert_eq!(pruned_tree1.nodes[1].right_child, 0);
+        assert_eq!(pruned_tree1.nodes[3].split_index, LEAF_NODE);
+        assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 2.0);
+
+        // Test case 2: Prune left subtree of left child of root
+        let mut predicate2 = Predicate::new();
+        predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.69)); // :)
+        let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
+
+        assert_eq!(pruned_tree2.num_nodes(), tree.num_nodes() - 1);
+        assert_eq!(pruned_tree2.nodes[0].right_child, 2);
+        assert_eq!(pruned_tree2.nodes[0].left_child, 1);
+        assert_eq!(pruned_tree2.nodes[1].split_index, 1);
+        assert_eq!(pruned_tree2.nodes[2].split_index, LEAF_NODE);
+        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
+
+        // Test case 2: Prune left root tree
+        let mut predicate3 = Predicate::new();
+        predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
+        let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
+        assert_eq!(pruned_tree3.num_nodes(), 3);
+        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 2.0);
+        assert_eq!(pruned_tree3.depth(), 2);
+
+        // Test case 3: No pruning
+        let predicate3 = Predicate::new();
+        let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
+
+        assert_eq!(pruned_tree3.nodes, tree.nodes);
+    }
+
+    fn create_sample_tree_deep() -> Tree {
+        let nodes = vec![
+            Node {
+                split_index: 0,
+                split_condition: 0.5,
+                left_child: 1,
+                right_child: 2,
+                weight: 0.0,
+            },
+            Node {
+                split_index: 1,
+                split_condition: 0.3,
+                left_child: 3,
+                right_child: 4,
+                weight: 0.0,
+            },
+            Node {
+                split_index: 1,
+                split_condition: 0.7,
+                left_child: 5,
+                right_child: 6,
+                weight: 0.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: -2.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: -1.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: 1.0,
+            },
+            Node {
+                split_index: LEAF_NODE,
+                split_condition: 0.0,
+                left_child: 0,
+                right_child: 0,
+                weight: 2.0,
+            },
+        ];
+        Tree {
+            nodes,
+            feature_offset: 0,
+        }
+    }
+
+    #[test]
+    fn test_trees_load() {
+        let model_data = serde_json::json!({
+            "learner": {
+                "learner_model_param": { "base_score": "0.5" },
+                "feature_names": ["feature0", "feature1"],
+                "gradient_booster": {
+                    "model": {
+                        "trees": [
+                            {
+                                "split_indices": [0],
+                                "split_conditions": [0.5],
+                                "left_children": [1],
+                                "right_children": [2],
+                                "base_weights": [0.0, -1.0, 1.0]
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+
+        let trees = Trees::load(&model_data);
+        assert_eq!(trees.base_score, 0.5);
+        assert_eq!(trees.feature_names, vec!["feature0", "feature1"]);
+        assert_eq!(trees.trees.len(), 1);
+        assert_eq!(trees.trees[0].nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_trees_predict_batch() {
+        let trees = Trees {
+            base_score: 0.5,
+            trees: vec![create_sample_tree()],
+            feature_names: vec!["feature0".to_string()],
+        };
+
+        let schema = Schema::new(vec![Field::new("feature0", DataType::Float64, false)]);
+        let feature_data = Float64Array::from(vec![0.4, 0.6]);
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(feature_data)]).unwrap();
+
+        let predictions = trees.predict_batch(&batch).unwrap();
+        assert_eq!(predictions.value(0), -0.5); // 0.5 (base_score) + -1.0
+        assert_eq!(predictions.value(1), 1.5); // 0.5 (base_score) + 1.0
+    }
+
+    #[test]
+    fn test_trees_total_trees() {
+        let trees = Trees {
+            base_score: 0.5,
+            trees: vec![create_sample_tree(), create_sample_tree()],
+            feature_names: vec!["feature0".to_string()],
+        };
+        assert_eq!(trees.total_trees(), 2);
+    }
+
+    #[test]
+    fn test_trees_tree_depths() {
+        let trees = Trees {
+            base_score: 0.5,
+            trees: vec![create_sample_tree(), create_sample_tree()],
+            feature_names: vec!["feature0".to_string()],
+        };
+        assert_eq!(trees.tree_depths(), vec![2, 2]);
+    }
+
+    #[test]
+    fn test_trees_prune() {
+        let trees = Trees {
+            base_score: 0.5,
+            trees: vec![create_sample_tree(), create_sample_tree()],
+            feature_names: vec!["feature0".to_string()],
+        };
+
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.3));
+
+        let pruned_trees = trees.prune(&predicate);
+        assert_eq!(pruned_trees.trees.len(), 2);
+        assert_eq!(pruned_trees.trees[0].nodes.len(), 3);
+        assert_eq!(pruned_trees.trees[1].nodes.len(), 3);
     }
 }
