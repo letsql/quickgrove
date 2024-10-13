@@ -321,7 +321,7 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
             .sum::<usize>()
     );
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(10.0));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(10.0));
 
     let pruned_trees = trees.prune(&predicate);
