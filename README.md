@@ -1,16 +1,91 @@
-# Trusty (WIP)
+# Work In Progress
+# 🦀🔮 Trusty: Arrow-Native Tree-Based Model Inference in Rust!
 
-Trusty is a Rust library for efficiently working with Tree-based models in Rust, providing functionality for loading, pruning with data predicates, and making predictions with XGBoost decision trees.
+Trusty is a high-performance, Arrow-native Rust library for efficient tree-based model inference. It's designed to seamlessly integrate with your Rust ML projects, offering support for XGBoost models with plans to expand to other frameworks.
 
+> ⚠️ **WARNING: ACTIVE DEVELOPMENT** ⚠️
+> 
+> Trusty is currently under heavy development and has not yet reached a stable release.
+> Expect frequent changes, potential bugs, and evolving APIs. Use in production at your own risk.
+> We welcome feedback and contributions to help improve Trusty!
 
-## Features
-- Load XGBoost models from JSON format
-- Support for multiple XGBoost objectives (reg:squarederror, reg:logistic, etc.)
-- Efficient batch predictions using Apache Arrow
-- Tree pruning capabilities based on predicates
-- Comprehensive tree information and statistics
+## 🚀 Features
 
-## Supported Formats and Objectives:
+- 🌳 Load XGBoost models from JSON format
+- 🎯 Support for multiple XGBoost objectives
+- ⚡ Fast batch predictions using Apache Arrow
+- ✂️  Tree pruning capabilities based on predicates
+- 📊 Detailed tree information and statistics
+
+## 🛠️ Installation
+
+Add Trusty to your `Cargo.toml`:
+
+```toml
+[dependencies]
+trusty = "0.1.0"
+```
+
+## 🚦 Quick Start
+
+```rust
+use trusty::{Trees, Predicate, Condition};
+use arrow::record_batch::RecordBatch;
+
+// Load the model
+let model = Trees::load_from_file("path/to/model.json").unwrap();
+
+// Make predictions
+let batch: RecordBatch = // ... load your data into a RecordBatch
+let predictions = model.predict_batch(&batch).unwrap();
+
+// Prune the model
+let predicate = Predicate::new()
+    .add_condition("feature_name", Condition::LessThan(0.5));
+let pruned_model = model.prune(&predicate);
+
+// Get tree information
+pruned_model.print_tree_info();
+```
+
+## 🧪 Advanced Features
+
+### Tree Visualization
+
+Visualize your decision trees with ASCII art:
+
+```rust
+tree.print_ascii(&feature_names);
+```
+
+### Custom Pruning
+
+Create complex pruning rules using the `Predicate` struct:
+
+```rust
+let mut predicate = Predicate::new();
+predicate.add_condition("age".to_string(), Condition::GreaterThanOrEqual(18.0));
+predicate.add_condition("income".to_string(), Condition::LessThan(50000.0));
+```
+## 🌟 Why Trusty?
+
+- **Fast**: Leverage the safety and performance of Rust in your ML pipelines.
+- **Arrow Integration**: Seamlessly work with Arrow data structures for maximum efficiency.
+- **Extensible**: We're actively working on supporting more tree-based model formats.
+- **ML Ecosystem Friendly**: Designed to integrate smoothly with other Rust ML tools.
+
+## 🤓 For the Rust-Curious Data Scientist
+
+If you're a data scientist interested in Rust, this project showcases:
+
+- 🦺 Rust's strong type system and memory safety
+- 🧩 Efficient data structures for tree-based models
+- ⚡ High-performance numerical computations
+- 🏗️ Integration with Arrow for scalable data processing
+
+Dive into the code to see how Rust's performance and safety features can benefit machine learning applications!
+
+## 🚧 Roadmap
 - [ ] XGBoost
     - [x] reg:squarederror: regression with squared loss.
     - [ ] reg:squaredlogerror: regression with squared log loss. All input labels are required to be greater than -1. Also, see metric rmsle for possible issue with this objective.
@@ -29,40 +104,13 @@ Trusty is a Rust library for efficiently working with Tree-based models in Rust,
     - [ ] rank:pairwise: Use LambdaRank to perform pair-wise ranking using the ranknet objective.
     - [ ] reg:gamma: gamma regression with log-link. Output is a mean of gamma distribution. It might be useful, e.g., for modeling insurance claims severity, or for any outcome that might be gamma-distributed.
     - [ ] reg:tweedie: Tweedie regression with log-link. It might be useful, e.g., for modeling total loss in insurance, or for any outcome that might be Tweedie-distributed.
-- [ ] LightGBM
-- [ ] CatBoost
+- [ ] Support for LightGBM and CatBoost
+- [ ] Native model training capabilities
+- [ ] Python bindings for broader accessibility
 
-## Installation
+## 📜 License
 
-Add this to your `Cargo.toml`:
+Trusty is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-```toml
-[dependencies]
-trusty = "0.1.0"
-```
-
-## Usage
-
-Here's a quick example of how to use Trusty:
-
-```rust
-use trusty::{Trees, Predicate, Condition};
-use arrow::record_batch::RecordBatch;
-
-// Load the model
-let model_json = std::fs::read_to_string("path/to/model.json").unwrap();
-let model_data: serde_json::Value = serde_json::from_str(&model_json).unwrap();
-let trees = Trees::load(&model_data);
-
-// Make predictions
-let batch: RecordBatch = // ... load your data into a RecordBatch
-let predictions = trees.predict_batch(&batch).unwrap();
-
-// Prune the model
-let mut predicate = Predicate::new();
-predicate.add_condition("feature_name".to_string(), Condition::LessThan(0.5));
-let pruned_trees = trees.prune(&predicate);
-
-// Get tree information
-pruned_trees.print_tree_info();
-```
+---
+Built with 🦀 for the Rust community.
