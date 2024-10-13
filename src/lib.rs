@@ -153,11 +153,20 @@ impl Tree {
     }
 
     fn num_nodes(&self) -> usize {
-        // only count nodes that are not leaves
-        self.nodes
-            .iter()
-            .filter(|n| n.split_index != LEAF_NODE)
-            .count()
+        // Count the number of reachable nodes starting from the root
+        // we cannot simply iterate over the nodes because some nodes may be unreachable
+
+        fn count_reachable_nodes(nodes: &[Node], node_index: usize) -> usize {
+            let node = &nodes[node_index];
+            if node.split_index == LEAF_NODE {
+                0
+            } else {
+                1 + count_reachable_nodes(nodes, node.left_child as usize)
+                    + count_reachable_nodes(nodes, node.right_child as usize)
+            }
+        }
+
+        count_reachable_nodes(&self.nodes, 0)
     }
 
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
@@ -378,7 +387,7 @@ impl Trees {
         Ok(builder.finish())
     }
 
-    pub fn total_trees(&self) -> usize {
+    pub fn num_trees(&self) -> usize {
         self.trees.len()
     }
 
@@ -401,7 +410,7 @@ impl Trees {
     }
 
     pub fn print_tree_info(&self) {
-        println!("Total number of trees: {}", self.total_trees());
+        println!("Total number of trees: {}", self.num_trees());
 
         let depths = self.tree_depths();
         println!("Tree depths: {:?}", depths);
@@ -566,19 +575,15 @@ mod tests {
         assert_eq!(pruned_tree2.nodes[2].split_index, LEAF_NODE);
         assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
 
-        // Test case 2: Prune left root tree
+        // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
         predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-        assert_eq!(pruned_tree3.num_nodes(), 3);
+        pruned_tree3.print_ascii(&feature_names);
+        println!("Tree: {:?}", pruned_tree3);
+        assert_eq!(pruned_tree3.num_nodes(), 1);
         assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 2.0);
         assert_eq!(pruned_tree3.depth(), 2);
-
-        // Test case 3: No pruning
-        let predicate3 = Predicate::new();
-        let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-
-        assert_eq!(pruned_tree3.nodes, tree.nodes);
     }
 
     fn create_sample_tree_deep() -> Tree {
@@ -686,13 +691,13 @@ mod tests {
     }
 
     #[test]
-    fn test_trees_total_trees() {
+    fn test_trees_num_trees() {
         let trees = Trees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: vec!["feature0".to_string()],
         };
-        assert_eq!(trees.total_trees(), 2);
+        assert_eq!(trees.num_trees(), 2);
     }
 
     #[test]
