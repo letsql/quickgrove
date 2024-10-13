@@ -1,4 +1,4 @@
-use arrow::array::{Array, Float64Array};
+use arrow::array::{Array, Float64Array, Float64Builder};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use log::debug;
@@ -345,7 +345,7 @@ impl Trees {
 
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
-        let mut scores = vec![self.base_score; num_rows];
+        let mut builder = Float64Builder::with_capacity(num_rows);
         let mut features = vec![0.0; self.feature_names.len()];
 
         let feature_columns: Vec<&Float64Array> = self
@@ -364,17 +364,18 @@ impl Trees {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        #[allow(clippy::needless_range_loop)]
         for row in 0..num_rows {
+            let mut score = self.base_score;
             for (i, col) in feature_columns.iter().enumerate() {
                 features[i] = col.value(row);
             }
             for tree in &self.trees {
-                scores[row] += tree.predict(&features);
+                score += tree.predict(&features);
             }
+            builder.append_value(score);
         }
 
-        Ok(Float64Array::from(scores))
+        Ok(builder.finish())
     }
 
     pub fn total_trees(&self) -> usize {
