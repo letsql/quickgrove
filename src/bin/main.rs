@@ -108,11 +108,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let predictions = trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(62.0));
+    predicate.add_condition("carat".to_string(), Condition::LessThan(2.5));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(3.0));
+    predicate.add_condition("depth".to_string(), Condition::GreaterThanOrEqual(60.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(65.0));
     println!("\nWith pruning:");
+    trees.trees[0].print_ascii(&trees.feature_names);
     let pruned_trees = trees.prune(&predicate);
     pruned_trees.print_tree_info();
+    pruned_trees.trees[0].print_ascii(&pruned_trees.feature_names);
     let predictions = pruned_trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let gbdt_trees = GBDT::from_xgboost_json_used_feature("models/pricing-model-100-mod.json")?;
