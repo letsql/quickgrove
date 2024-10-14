@@ -4,6 +4,7 @@ use arrow::record_batch::RecordBatch;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use colored::Colorize;
 
 const LEAF_NODE: i32 = -1;
 
@@ -305,6 +306,79 @@ impl Tree {
 
         println!("Tree ASCII Representation:");
         print_node(self, 0, "", true, feature_names);
+    }
+    
+    pub fn print_diff(&self, other: &Tree, feature_names: &[String]) {
+        fn print_node_diff(
+            tree_a: &Tree,
+            tree_b: &Tree,
+            node_index_a: usize,
+            node_index_b: usize,
+            prefix: &str,
+            is_left: bool,
+            feature_names: &[String],
+        ) {
+            let connector = if is_left { "├── " } else { "└── " };
+            
+            match (tree_a.nodes.get(node_index_a), tree_b.nodes.get(node_index_b)) {
+                (Some(node_a), Some(node_b)) => {
+                    let node_str_a = node_to_string(node_a, tree_a, feature_names);
+                    let node_str_b = node_to_string(node_b, tree_b, feature_names);
+                    
+                    if node_str_a == node_str_b {
+                        println!("{}{}{}", prefix, connector, node_str_a);
+                    } else {
+                        println!("{}{}{}", prefix, connector, node_str_a.red());
+                        println!("{}{}{}", prefix, connector, node_str_b.green());
+                    }
+
+                    if node_a.split_index != LEAF_NODE || node_b.split_index != LEAF_NODE {
+                        let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
+                        print_node_diff(
+                            tree_a,
+                            tree_b,
+                            node_a.left_child as usize,
+                            node_b.left_child as usize,
+                            &new_prefix,
+                            true,
+                            feature_names,
+                        );
+                        print_node_diff(
+                            tree_a,
+                            tree_b,
+                            node_a.right_child as usize,
+                            node_b.right_child as usize,
+                            &new_prefix,
+                            false,
+                            feature_names,
+                        );
+                    }
+                },
+                (Some(node_a), None) => {
+                    println!("{}{}{}", prefix, connector, node_to_string(node_a, tree_a, feature_names).red());
+                },
+                (None, Some(node_b)) => {
+                    println!("{}{}{}", prefix, connector, node_to_string(node_b, tree_b, feature_names).green());
+                },
+                (None, None) => {}
+            }
+        }
+
+        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
+            if node.split_index == LEAF_NODE {
+                format!("Leaf (weight: {:.4})", node.weight)
+            } else {
+                let feature_index = tree.feature_offset + node.split_index as usize;
+                let feature_name = feature_names
+                    .get(feature_index)
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                format!("{} < {:.4}", feature_name, node.split_condition)
+            }
+        }
+
+        println!("Tree Diff:");
+        print_node_diff(self, other, 0, 0, "", true, feature_names);
     }
 }
 

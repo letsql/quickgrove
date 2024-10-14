@@ -117,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pruned_trees = trees.prune(&predicate);
     pruned_trees.print_tree_info();
     pruned_trees.trees[0].print_ascii(&pruned_trees.feature_names);
+    trees.trees[0].print_diff(&pruned_trees.trees[0], &trees.feature_names);
     let predictions = pruned_trees.predict_batch(&batch);
     println!("Predictions: {:?}", predictions);
     let gbdt_trees = GBDT::from_xgboost_json_used_feature("models/pricing-model-100-mod.json")?;
