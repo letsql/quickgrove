@@ -2,9 +2,11 @@ use arrow::array::{Array, Float64Array, Float64Builder};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use log::debug;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use colored::Colorize;
+use std::fmt;
+use std::sync::Arc;
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 const LEAF_NODE: i32 = -1;
 
@@ -17,10 +19,54 @@ pub struct Node {
     weight: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tree {
     nodes: Vec<Node>,
     feature_offset: usize,
+    feature_names: Arc<Vec<String>>,
+}
+
+impl Serialize for Tree {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct TreeHelper<'a> {
+            nodes: &'a Vec<Node>,
+            feature_offset: usize,
+            feature_names: &'a Vec<String>,
+        }
+
+        let helper = TreeHelper {
+            nodes: &self.nodes,
+            feature_offset: self.feature_offset,
+            feature_names: &self.feature_names,
+        };
+
+        helper.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Tree {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TreeHelper {
+            nodes: Vec<Node>,
+            feature_offset: usize,
+            feature_names: Vec<String>,
+        }
+
+        let helper = TreeHelper::deserialize(deserializer)?;
+        Ok(Tree {
+            nodes: helper.nodes,
+            feature_offset: helper.feature_offset,
+            feature_names: Arc::new(helper.feature_names),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,15 +102,16 @@ impl Default for Predicate {
 }
 
 impl Tree {
-    pub fn new() -> Self {
+    pub fn new(feature_names: Arc<Vec<String>>) -> Self {
         Tree {
             nodes: Vec::new(),
             feature_offset: 0,
+            feature_names,
         }
     }
 
-    pub fn load(tree_dict: &serde_json::Value, feature_names: &[String]) -> Self {
-        let mut tree = Tree::new();
+    pub fn load(tree_dict: &serde_json::Value, feature_names: Arc<Vec<String>>) -> Self {
+        let mut tree = Tree::new(feature_names);
 
         let split_indices: Vec<i32> = tree_dict["split_indices"]
             .as_array()
@@ -118,9 +165,9 @@ impl Tree {
             tree.nodes.push(node);
         }
 
-        tree.feature_offset = feature_names
+        tree.feature_offset = tree.feature_names
             .iter()
-            .position(|name| name == &feature_names[0])
+            .position(|name| name == &tree.feature_names[0])
             .unwrap_or(0);
 
         tree
@@ -242,6 +289,7 @@ impl Tree {
             Some(Tree {
                 nodes: new_nodes,
                 feature_offset: self.feature_offset,
+                feature_names: self.feature_names.clone(),
             })
         } else {
             debug!("No changes made to the tree structure.");
@@ -384,15 +432,15 @@ impl Tree {
 
 impl Default for Tree {
     fn default() -> Self {
-        Tree::new()
+        Tree::new(Arc::new(vec![]))
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Trees {
     base_score: f64,
     pub trees: Vec<Tree>,
-    pub feature_names: Vec<String>,
+    pub feature_names: Arc<Vec<String>>,
 }
 
 impl Trees {
@@ -402,20 +450,22 @@ impl Trees {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.5);
 
-        let feature_names: Vec<String> = model_data["learner"]["feature_names"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let feature_names: Arc<Vec<String>> = Arc::new(
+            model_data["learner"]["feature_names"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        );
 
         let trees: Vec<Tree> = model_data["learner"]["gradient_booster"]["model"]["trees"]
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|tree_data| Tree::load(tree_data, &feature_names))
+                    .map(|tree_data| Tree::load(tree_data, Arc::clone(&feature_names)))
                     .collect()
             })
             .unwrap_or_default();
@@ -538,6 +588,8 @@ mod tests {
         Tree {
             nodes,
             feature_offset: 0,
+            feature_names: Arc::new(vec!["feature0".to_string()])
+                    
         }
     }
 
@@ -595,6 +647,7 @@ mod tests {
                 }
             ],
             feature_offset: 0,
+            feature_names: Arc::new(vec!["feature0".to_string(), "feature1".to_string(), "feature2".to_string()])
         }
     }
 
@@ -718,7 +771,7 @@ mod tests {
 
         let trees = Trees::load(&model_data);
         assert_eq!(trees.base_score, 0.5);
-        assert_eq!(trees.feature_names, vec!["feature0", "feature1"]);
+        assert_eq!(trees.feature_names, Arc::new(vec!["feature0".to_string(), "feature1".to_string()]));
         assert_eq!(trees.trees.len(), 1);
         assert_eq!(trees.trees[0].nodes.len(), 1);
     }
@@ -728,7 +781,7 @@ mod tests {
         let trees = Trees {
             base_score: 0.5,
             trees: vec![create_sample_tree()],
-            feature_names: vec!["feature0".to_string()],
+            feature_names: Arc::new(vec!["feature0".to_string()]),
         };
 
         let schema = Schema::new(vec![Field::new("feature0", DataType::Float64, false)]);
@@ -745,7 +798,7 @@ mod tests {
         let trees = Trees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
-            feature_names: vec!["feature0".to_string()],
+            feature_names: Arc::new(vec!["feature0".to_string()]),
         };
         assert_eq!(trees.num_trees(), 2);
     }
@@ -755,7 +808,7 @@ mod tests {
         let trees = Trees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
-            feature_names: vec!["feature0".to_string()],
+            feature_names: Arc::new(vec!["feature0".to_string()]),
         };
         assert_eq!(trees.tree_depths(), vec![2, 2]);
     }
@@ -765,7 +818,7 @@ mod tests {
         let trees = Trees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
-            feature_names: vec!["feature0".to_string()],
+            feature_names: Arc::new(vec!["feature0".to_string()]),
         };
 
         let mut predicate = Predicate::new();
