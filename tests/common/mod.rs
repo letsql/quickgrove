@@ -1,18 +1,15 @@
-use arrow::array::ArrayRef;
-use arrow::array::{Float64Array, StringArray};
-use arrow::csv::ReaderBuilder;
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::record_batch::RecordBatch;
-use env_logger::Env;
-use gbdt::decision_tree::Data;
-use gbdt::gradient_boost::GBDT;
-use log::debug;
-use rayon::prelude::*;
 use serde_json::Value;
-use std::error::Error;
 use std::fs::File;
+use std::error::Error;
 use std::io::BufReader;
 use std::sync::Arc;
+use arrow::csv::ReaderBuilder;
+use arrow::record_batch::RecordBatch;
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{ArrayRef, Float64Array, StringArray};
+use gbdt::decision_tree::Data;
+use gbdt::gradient_boost::GBDT;
+use rayon::prelude::*;
 
 pub fn read_csv_to_batches(
     path: &str,
@@ -252,4 +249,70 @@ pub fn run_prediction_with_gbdt(
         .collect();
 
     Ok(result)
+}
+
+pub fn load_model_data(file_path: &str) -> Result<Value, Box<dyn Error>> {
+    let model_file = File::open(file_path)?;
+    let reader = BufReader::new(model_file);
+    let model_data: Value = serde_json::from_reader(reader)?;
+    Ok(model_data)
+}
+
+pub fn create_record_batch() -> Result<RecordBatch, Box<dyn Error>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("carat", DataType::Float64, false),
+        Field::new("depth", DataType::Float64, false),
+        Field::new("table", DataType::Float64, false),
+        Field::new("x", DataType::Float64, false),
+        Field::new("y", DataType::Float64, false),
+        Field::new("z", DataType::Float64, false),
+        Field::new("cut_good", DataType::Float64, false),
+        Field::new("cut_ideal", DataType::Float64, false),
+        Field::new("cut_premium", DataType::Float64, false),
+        Field::new("cut_very_good", DataType::Float64, false),
+        Field::new("color_e", DataType::Float64, false),
+        Field::new("color_f", DataType::Float64, false),
+        Field::new("color_g", DataType::Float64, false),
+        Field::new("color_h", DataType::Float64, false),
+        Field::new("color_i", DataType::Float64, false),
+        Field::new("color_j", DataType::Float64, false),
+        Field::new("clarity_if", DataType::Float64, false),
+        Field::new("clarity_si1", DataType::Float64, false),
+        Field::new("clarity_si2", DataType::Float64, false),
+        Field::new("clarity_vs1", DataType::Float64, false),
+        Field::new("clarity_vs2", DataType::Float64, false),
+        Field::new("clarity_vvs1", DataType::Float64, false),
+        Field::new("clarity_vvs2", DataType::Float64, false),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Float64Array::from(vec![2.35])),
+            Arc::new(Float64Array::from(vec![61.5])),
+            Arc::new(Float64Array::from(vec![55.0])),
+            Arc::new(Float64Array::from(vec![3.95])),
+            Arc::new(Float64Array::from(vec![3.98])),
+            Arc::new(Float64Array::from(vec![2.43])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![1.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![1.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![1.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(Float64Array::from(vec![0.0])),
+        ],
+    )?;
+
+    Ok(batch)
 }

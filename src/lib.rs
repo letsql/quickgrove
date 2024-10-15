@@ -1,7 +1,7 @@
 use arrow::array::{Array, Float64Array, Float64Builder};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use colored::*;
+use colored::Colorize;
 use log::debug;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
