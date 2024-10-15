@@ -1,12 +1,12 @@
 use arrow::array::{Array, Float64Array, Float64Builder};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+use colored::*;
 use log::debug;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use colored::Colorize;
 use std::fmt;
 use std::sync::Arc;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
 
 const LEAF_NODE: i32 = -1;
 
@@ -69,6 +69,223 @@ impl<'de> Deserialize<'de> for Tree {
     }
 }
 
+impl fmt::Display for Tree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn fmt_node(
+            f: &mut fmt::Formatter<'_>,
+            tree: &Tree,
+            node_index: usize,
+            prefix: &str,
+            is_left: bool,
+            feature_names: &[String],
+        ) -> fmt::Result {
+            if node_index >= tree.nodes.len() {
+                return Ok(());
+            }
+
+            let node = &tree.nodes[node_index];
+            let connector = if is_left { "├── " } else { "└── " };
+
+            writeln!(
+                f,
+                "{}{}{}",
+                prefix,
+                connector,
+                node_to_string(node, tree, feature_names)
+            )?;
+
+            if node.split_index != LEAF_NODE {
+                let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
+                fmt_node(
+                    f,
+                    tree,
+                    node.left_child as usize,
+                    &new_prefix,
+                    true,
+                    feature_names,
+                )?;
+                fmt_node(
+                    f,
+                    tree,
+                    node.right_child as usize,
+                    &new_prefix,
+                    false,
+                    feature_names,
+                )?;
+            }
+            Ok(())
+        }
+
+        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
+            if node.split_index == LEAF_NODE {
+                format!("Leaf (weight: {:.4})", node.weight)
+            } else {
+                let feature_index = tree.feature_offset + node.split_index as usize;
+                let feature_name = feature_names
+                    .get(feature_index)
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                format!("{} < {:.4}", feature_name, node.split_condition)
+            }
+        }
+
+        writeln!(f, "Tree:")?;
+        fmt_node(f, self, 0, "", true, &self.feature_names)
+    }
+}
+
+pub struct TreeDiff<'a> {
+    old_tree: &'a Tree,
+    new_tree: &'a Tree,
+}
+
+impl<'a> fmt::Display for TreeDiff<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn fmt_node_diff(
+            f: &mut fmt::Formatter<'_>,
+            old_tree: &Tree,
+            new_tree: &Tree,
+            old_index: Option<usize>,
+            new_index: Option<usize>,
+            prefix: &str,
+            is_left: bool,
+        ) -> fmt::Result {
+            let connector = if is_left { "├── " } else { "└── " };
+            let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
+
+            match (
+                old_index.and_then(|i| old_tree.nodes.get(i)),
+                new_index.and_then(|i| new_tree.nodes.get(i)),
+            ) {
+                (Some(old_node), Some(new_node)) => {
+                    let old_str = node_to_string(old_node, old_tree);
+                    let new_str = node_to_string(new_node, new_tree);
+
+                    if old_str == new_str {
+                        writeln!(f, "{}{}{}", prefix, connector, old_str)?;
+                    } else {
+                        writeln!(f, "{}{}{}", prefix, connector, old_str.red())?;
+                        writeln!(f, "{}{}{}", prefix, connector, new_str.green())?;
+                    }
+
+                    if old_node.split_index != LEAF_NODE || new_node.split_index != LEAF_NODE {
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            if old_node.split_index != LEAF_NODE {
+                                Some(old_node.left_child as usize)
+                            } else {
+                                None
+                            },
+                            if new_node.split_index != LEAF_NODE {
+                                Some(new_node.left_child as usize)
+                            } else {
+                                None
+                            },
+                            &new_prefix,
+                            true,
+                        )?;
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            if old_node.split_index != LEAF_NODE {
+                                Some(old_node.right_child as usize)
+                            } else {
+                                None
+                            },
+                            if new_node.split_index != LEAF_NODE {
+                                Some(new_node.right_child as usize)
+                            } else {
+                                None
+                            },
+                            &new_prefix,
+                            false,
+                        )?;
+                    }
+                }
+                (Some(old_node), None) => {
+                    writeln!(
+                        f,
+                        "{}{}{}",
+                        prefix,
+                        connector,
+                        node_to_string(old_node, old_tree).red().strikethrough()
+                    )?;
+                    if old_node.split_index != LEAF_NODE {
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            Some(old_node.left_child as usize),
+                            None,
+                            &new_prefix,
+                            true,
+                        )?;
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            Some(old_node.right_child as usize),
+                            None,
+                            &new_prefix,
+                            false,
+                        )?;
+                    }
+                }
+                (None, Some(new_node)) => {
+                    writeln!(
+                        f,
+                        "{}{}{}",
+                        prefix,
+                        connector,
+                        node_to_string(new_node, new_tree).green().underline()
+                    )?;
+                    if new_node.split_index != LEAF_NODE {
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            None,
+                            Some(new_node.left_child as usize),
+                            &new_prefix,
+                            true,
+                        )?;
+                        fmt_node_diff(
+                            f,
+                            old_tree,
+                            new_tree,
+                            None,
+                            Some(new_node.right_child as usize),
+                            &new_prefix,
+                            false,
+                        )?;
+                    }
+                }
+                (None, None) => {}
+            }
+            Ok(())
+        }
+
+        fn node_to_string(node: &Node, tree: &Tree) -> String {
+            if node.split_index == LEAF_NODE {
+                format!("Leaf (weight: {:.4})", node.weight)
+            } else {
+                let feature_name = tree
+                    .feature_names
+                    .get(tree.feature_offset + node.split_index as usize)
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                format!("{} < {:.4}", feature_name, node.split_condition)
+            }
+        }
+
+        writeln!(f, "Tree Diff:")?;
+        fmt_node_diff(f, self.old_tree, self.new_tree, Some(0), Some(0), "", true)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Condition {
     LessThan(f64),
@@ -90,7 +307,7 @@ impl Predicate {
     pub fn add_condition(&mut self, feature_name: String, condition: Condition) {
         self.conditions
             .entry(feature_name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(condition);
     }
 }
@@ -165,7 +382,8 @@ impl Tree {
             tree.nodes.push(node);
         }
 
-        tree.feature_offset = tree.feature_names
+        tree.feature_offset = tree
+            .feature_names
             .iter()
             .position(|name| name == &tree.feature_names[0])
             .unwrap_or(0);
@@ -297,65 +515,13 @@ impl Tree {
         }
     }
 
-    pub fn print_ascii(&self, feature_names: &[String]) {
-        fn print_node(
-            tree: &Tree,
-            node_index: usize,
-            prefix: &str,
-            is_left: bool,
-            feature_names: &[String],
-        ) {
-            if node_index >= tree.nodes.len() {
-                return;
-            }
-
-            let node = &tree.nodes[node_index];
-            let connector = if is_left { "├── " } else { "└── " };
-            println!(
-                "{}{}{}",
-                prefix,
-                connector,
-                node_to_string(node, tree, feature_names)
-            );
-
-            if node.split_index != LEAF_NODE {
-                let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
-                print!("l");
-                print_node(
-                    tree,
-                    node.left_child as usize,
-                    &new_prefix,
-                    true,
-                    feature_names,
-                );
-                print!("r");
-                print_node(
-                    tree,
-                    node.right_child as usize,
-                    &new_prefix,
-                    false,
-                    feature_names,
-                );
-            }
+    pub fn diff<'a>(&'a self, other: &'a Tree) -> TreeDiff<'a> {
+        TreeDiff {
+            old_tree: self,
+            new_tree: other,
         }
-
-        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
-            if node.split_index == LEAF_NODE {
-                format!("Leaf (weight: {:.4})", node.weight)
-            } else {
-                let feature_index = tree.feature_offset + node.split_index as usize;
-                let feature_name = feature_names
-                    .get(feature_index)
-                    .map(|s| s.as_str())
-                    .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.split_condition)
-            }
-        }
-
-        println!("Tree ASCII Representation:");
-        print_node(self, 0, "", true, feature_names);
     }
-    
+
     pub fn print_diff(&self, other: &Tree, feature_names: &[String]) {
         fn print_node_diff(
             tree_a: &Tree,
@@ -367,12 +533,15 @@ impl Tree {
             feature_names: &[String],
         ) {
             let connector = if is_left { "├── " } else { "└── " };
-            
-            match (tree_a.nodes.get(node_index_a), tree_b.nodes.get(node_index_b)) {
+
+            match (
+                tree_a.nodes.get(node_index_a),
+                tree_b.nodes.get(node_index_b),
+            ) {
                 (Some(node_a), Some(node_b)) => {
                     let node_str_a = node_to_string(node_a, tree_a, feature_names);
                     let node_str_b = node_to_string(node_b, tree_b, feature_names);
-                    
+
                     if node_str_a == node_str_b {
                         println!("{}{}{}", prefix, connector, node_str_a);
                     } else {
@@ -381,7 +550,8 @@ impl Tree {
                     }
 
                     if node_a.split_index != LEAF_NODE || node_b.split_index != LEAF_NODE {
-                        let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
+                        let new_prefix =
+                            format!("{}{}   ", prefix, if is_left { "│" } else { " " });
                         print_node_diff(
                             tree_a,
                             tree_b,
@@ -401,13 +571,23 @@ impl Tree {
                             feature_names,
                         );
                     }
-                },
+                }
                 (Some(node_a), None) => {
-                    println!("{}{}{}", prefix, connector, node_to_string(node_a, tree_a, feature_names).red());
-                },
+                    println!(
+                        "{}{}{}",
+                        prefix,
+                        connector,
+                        node_to_string(node_a, tree_a, feature_names).red()
+                    );
+                }
                 (None, Some(node_b)) => {
-                    println!("{}{}{}", prefix, connector, node_to_string(node_b, tree_b, feature_names).green());
-                },
+                    println!(
+                        "{}{}{}",
+                        prefix,
+                        connector,
+                        node_to_string(node_b, tree_b, feature_names).green()
+                    );
+                }
                 (None, None) => {}
             }
         }
@@ -458,7 +638,7 @@ impl Trees {
                         .filter_map(|v| v.as_str().map(String::from))
                         .collect()
                 })
-                .unwrap_or_default()
+                .unwrap_or_default(),
         );
 
         let trees: Vec<Tree> = model_data["learner"]["gradient_booster"]["model"]["trees"]
@@ -588,8 +768,7 @@ mod tests {
         Tree {
             nodes,
             feature_offset: 0,
-            feature_names: Arc::new(vec!["feature0".to_string()])
-                    
+            feature_names: Arc::new(vec!["feature0".to_string()]),
         }
     }
 
@@ -644,10 +823,14 @@ mod tests {
                     left_child: 0,
                     right_child: 0,
                     weight: 2.0,
-                }
+                },
             ],
             feature_offset: 0,
-            feature_names: Arc::new(vec!["feature0".to_string(), "feature1".to_string(), "feature2".to_string()])
+            feature_names: Arc::new(vec![
+                "feature0".to_string(),
+                "feature1".to_string(),
+                "feature2".to_string(),
+            ]),
         }
     }
 
@@ -688,7 +871,6 @@ mod tests {
         let mut predicate1 = Predicate::new();
         predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.29));
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
-        pruned_tree1.print_ascii(&feature_names);
         assert_eq!(pruned_tree1.num_nodes(), tree.num_nodes() - 1);
         assert_eq!(pruned_tree1.nodes[1].left_child, 0);
         assert_eq!(pruned_tree1.nodes[1].right_child, 0);
@@ -711,40 +893,39 @@ mod tests {
         let mut predicate3 = Predicate::new();
         predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-        pruned_tree3.print_ascii(&feature_names);
         println!("Tree: {:?}", pruned_tree3);
         assert_eq!(pruned_tree3.num_nodes(), 1);
         assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 2.0);
         assert_eq!(pruned_tree3.depth(), 2);
     }
 
-
     #[test]
     fn test_tree_prune_multiple_conditions() {
         let tree = create_sample_tree_deep();
-        let feature_names = vec!["feature0".to_string(), "feature1".to_string(), "feature2".to_string()];
-            
-    
+        let feature_names = vec![
+            "feature0".to_string(),
+            "feature1".to_string(),
+            "feature2".to_string(),
+        ];
+
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
         predicate.add_condition("feature1".to_string(), Condition::LessThan(0.69));
-    
+
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
-        pruned_tree.print_ascii(&feature_names);
-        tree.print_ascii(&feature_names);
-            
+
         assert_eq!(pruned_tree.num_nodes(), 1);
-    
-        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 1.0);    
-        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);  
-        
+
+        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 1.0);
+        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
+
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
         predicate.add_condition("feature1".to_string(), Condition::GreaterThanOrEqual(0.7));
-    
+
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
         assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), -1.0);
-        assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -2.0);   
+        assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -2.0);
     }
 
     #[test]
@@ -771,7 +952,10 @@ mod tests {
 
         let trees = Trees::load(&model_data);
         assert_eq!(trees.base_score, 0.5);
-        assert_eq!(trees.feature_names, Arc::new(vec!["feature0".to_string(), "feature1".to_string()]));
+        assert_eq!(
+            trees.feature_names,
+            Arc::new(vec!["feature0".to_string(), "feature1".to_string()])
+        );
         assert_eq!(trees.trees.len(), 1);
         assert_eq!(trees.trees[0].nodes.len(), 1);
     }
