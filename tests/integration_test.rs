@@ -6,7 +6,6 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use common::{preprocess_batches, read_csv_to_batches, run_prediction_with_gbdt};
-use env_logger::Env;
 use gbdt::decision_tree::Data;
 use gbdt::gradient_boost::GBDT;
 use log::debug;
