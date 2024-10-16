@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 
+#[allow(dead_code)]
 pub fn read_csv_to_batches(
     path: &str,
     batch_size: usize,
@@ -30,7 +31,7 @@ pub fn read_csv_to_batches(
         Field::new("z", DataType::Float64, false),
     ]));
 
-    let mut csv = ReaderBuilder::new(schema)
+    let csv = ReaderBuilder::new(schema)
         .with_header(true)
         .with_batch_size(batch_size)
         .build(file)?;
@@ -43,6 +44,7 @@ pub fn read_csv_to_batches(
     Ok(batches)
 }
 
+#[allow(dead_code)]
 pub fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("carat", DataType::Float64, false),
@@ -218,6 +220,7 @@ pub fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, B
     Ok(processed_batches)
 }
 
+#[allow(dead_code)]
 pub fn run_prediction_with_gbdt(
     model: &GBDT,
     batches: &[RecordBatch],
