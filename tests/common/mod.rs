@@ -1,15 +1,15 @@
-use serde_json::Value;
-use std::fs::File;
-use std::error::Error;
-use std::io::BufReader;
-use std::sync::Arc;
-use arrow::csv::ReaderBuilder;
-use arrow::record_batch::RecordBatch;
-use arrow::datatypes::{DataType, Field, Schema};
 use arrow::array::{ArrayRef, Float64Array, StringArray};
+use arrow::csv::ReaderBuilder;
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
 use gbdt::decision_tree::Data;
 use gbdt::gradient_boost::GBDT;
 use rayon::prelude::*;
+use serde_json::Value;
+use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::Arc;
 
 pub fn read_csv_to_batches(
     path: &str,

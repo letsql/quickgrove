@@ -1,12 +1,12 @@
+use arrow::array::{Float64Array, PrimitiveArray};
+use arrow::datatypes::{DataType, Field, Float64Type, Schema};
+use arrow::record_batch::RecordBatch;
+use serde_json::Value;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use arrow::array::{Float64Array, PrimitiveArray};
-use arrow::datatypes::{DataType, Field, Schema, Float64Type};
-use arrow::record_batch::RecordBatch;
-use serde_json::Value;
-use trusty::{Trees, Predicate, Condition}; 
+use trusty::{Condition, Predicate, Trees};
 
 const MODEL_PATH: &str = "models/pricing-model-100-mod.json";
 
@@ -22,12 +22,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut predicate = Predicate::new();
     predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(3.0));
     predicate.add_condition("depth".to_string(), Condition::LessThan(65.0));
-    
+
     let pruned_trees = trees.prune(&predicate);
     let pruned_predictions: PrimitiveArray<Float64Type> = pruned_trees.predict_batch(&batch)?;
     println!("Pruned tree prediction successful");
     let diff = trees.trees[0].diff(&pruned_trees.trees[0]);
     println!("Diff: {:}", diff);
+    println!("Original predictions: {:}", predictions.value(0));
+    println!("Pruned predictions: {:}", pruned_predictions.value(0));
     Ok(())
 }
 

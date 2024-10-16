@@ -435,7 +435,7 @@ impl Tree {
     }
 
     fn num_nodes(&self) -> usize {
-        // Count the number of reachable nodes starting from the root
+        // Count the numer of reachable nodes starting from the root
         // we cannot simply iterate over the nodes because some nodes may be unreachable
 
         fn count_reachable_nodes(nodes: &[Node], node_index: usize) -> usize {
@@ -659,6 +659,7 @@ impl Trees {
             depths.iter().sum::<usize>() as f64 / depths.len() as f64
         );
         println!("Max tree depth: {}", depths.iter().max().unwrap_or(&0));
+        println!("Total number of nodes: {}", self.trees.iter().map(|tree| tree.num_nodes()).sum::<usize>());
     }
 }
 
@@ -667,7 +668,6 @@ mod tests {
     use super::*;
     use arrow::array::Float64Array;
     use arrow::datatypes::{DataType, Field, Schema};
-    use arrow::ipc::Feature;
     use arrow::record_batch::RecordBatch;
     use std::sync::Arc;
 
