@@ -19,6 +19,19 @@ pub struct Node {
     weight: f64,
 }
 
+#[derive(Clone)]
+pub enum Objective {
+    SquaredError,
+}
+
+impl Objective {
+    fn compute_score(&self, leaf_weight: f64) -> f64 {
+        match self {
+            Objective::SquaredError => leaf_weight,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tree {
     nodes: Vec<Node>,
@@ -521,93 +534,6 @@ impl Tree {
             new_tree: other,
         }
     }
-
-    pub fn print_diff(&self, other: &Tree, feature_names: &[String]) {
-        fn print_node_diff(
-            tree_a: &Tree,
-            tree_b: &Tree,
-            node_index_a: usize,
-            node_index_b: usize,
-            prefix: &str,
-            is_left: bool,
-            feature_names: &[String],
-        ) {
-            let connector = if is_left { "├── " } else { "└── " };
-
-            match (
-                tree_a.nodes.get(node_index_a),
-                tree_b.nodes.get(node_index_b),
-            ) {
-                (Some(node_a), Some(node_b)) => {
-                    let node_str_a = node_to_string(node_a, tree_a, feature_names);
-                    let node_str_b = node_to_string(node_b, tree_b, feature_names);
-
-                    if node_str_a == node_str_b {
-                        println!("{}{}{}", prefix, connector, node_str_a);
-                    } else {
-                        println!("{}{}{}", prefix, connector, node_str_a.red());
-                        println!("{}{}{}", prefix, connector, node_str_b.green());
-                    }
-
-                    if node_a.split_index != LEAF_NODE || node_b.split_index != LEAF_NODE {
-                        let new_prefix =
-                            format!("{}{}   ", prefix, if is_left { "│" } else { " " });
-                        print_node_diff(
-                            tree_a,
-                            tree_b,
-                            node_a.left_child as usize,
-                            node_b.left_child as usize,
-                            &new_prefix,
-                            true,
-                            feature_names,
-                        );
-                        print_node_diff(
-                            tree_a,
-                            tree_b,
-                            node_a.right_child as usize,
-                            node_b.right_child as usize,
-                            &new_prefix,
-                            false,
-                            feature_names,
-                        );
-                    }
-                }
-                (Some(node_a), None) => {
-                    println!(
-                        "{}{}{}",
-                        prefix,
-                        connector,
-                        node_to_string(node_a, tree_a, feature_names).red()
-                    );
-                }
-                (None, Some(node_b)) => {
-                    println!(
-                        "{}{}{}",
-                        prefix,
-                        connector,
-                        node_to_string(node_b, tree_b, feature_names).green()
-                    );
-                }
-                (None, None) => {}
-            }
-        }
-
-        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
-            if node.split_index == LEAF_NODE {
-                format!("Leaf (weight: {:.4})", node.weight)
-            } else {
-                let feature_index = tree.feature_offset + node.split_index as usize;
-                let feature_name = feature_names
-                    .get(feature_index)
-                    .map(|s| s.as_str())
-                    .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.split_condition)
-            }
-        }
-
-        println!("Tree Diff:");
-        print_node_diff(self, other, 0, 0, "", true, feature_names);
-    }
 }
 
 impl Default for Tree {
@@ -616,11 +542,11 @@ impl Default for Tree {
     }
 }
 
-#[derive(Debug)]
 pub struct Trees {
     base_score: f64,
     pub trees: Vec<Tree>,
     pub feature_names: Arc<Vec<String>>,
+    objective: Objective,
 }
 
 impl Trees {
@@ -650,10 +576,18 @@ impl Trees {
             })
             .unwrap_or_default();
 
+        let objective = match model_data["learner"]["learner_model_param"]["objective"]
+            .as_str()
+            .unwrap_or("reg:squarederror")
+        {
+            "reg:squarederror" => Objective::SquaredError,
+            _ => panic!("Unsupported objective"),
+        };
         Trees {
             base_score,
             trees,
             feature_names,
+            objective,
         }
     }
 
@@ -686,9 +620,9 @@ impl Trees {
             for tree in &self.trees {
                 score += tree.predict(&features);
             }
-            builder.append_value(score);
+            let final_score = self.objective.compute_score(score);
+            builder.append_value(final_score);
         }
-
         Ok(builder.finish())
     }
 
@@ -711,6 +645,7 @@ impl Trees {
             trees: pruned_trees,
             feature_names: self.feature_names.clone(),
             base_score: self.base_score,
+            objective: self.objective.clone(),
         }
     }
 
@@ -966,6 +901,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            objective: Objective::SquaredError,
         };
 
         let schema = Schema::new(vec![Field::new("feature0", DataType::Float64, false)]);
@@ -983,6 +919,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            objective: Objective::SquaredError,
         };
         assert_eq!(trees.num_trees(), 2);
     }
@@ -993,6 +930,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            objective: Objective::SquaredError,
         };
         assert_eq!(trees.tree_depths(), vec![2, 2]);
     }
@@ -1003,6 +941,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            objective: Objective::SquaredError,
         };
 
         let mut predicate = Predicate::new();
