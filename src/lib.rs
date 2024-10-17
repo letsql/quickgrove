@@ -1,4 +1,4 @@
-use arrow::array::{Array, Float64Array, Float64Builder};
+use arrow::array::{Array, Float64Array, Float64Builder, Int64Array};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use colored::Colorize;
@@ -10,6 +10,11 @@ use std::sync::Arc;
 
 const LEAF_NODE: i32 = -1;
 
+#[derive(Debug, Deserialize, Clone, PartialEq, serde::Serialize)]
+pub enum SplitType {
+    Numerical,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Node {
     split_index: i32, // LEAF_NODE for leaf nodes
@@ -17,6 +22,7 @@ pub struct Node {
     left_child: u32,
     right_child: u32,
     weight: f64,
+    split_type: SplitType,
 }
 
 #[derive(Clone)]
@@ -37,6 +43,7 @@ pub struct Tree {
     nodes: Vec<Node>,
     feature_offset: usize,
     feature_names: Arc<Vec<String>>,
+    feature_types: Arc<Vec<String>>,
 }
 
 impl Serialize for Tree {
@@ -49,12 +56,14 @@ impl Serialize for Tree {
             nodes: &'a Vec<Node>,
             feature_offset: usize,
             feature_names: &'a Vec<String>,
+            feature_types: &'a Vec<String>,
         }
 
         let helper = TreeHelper {
             nodes: &self.nodes,
             feature_offset: self.feature_offset,
             feature_names: &self.feature_names,
+            feature_types: &self.feature_types,
         };
 
         helper.serialize(serializer)
@@ -71,6 +80,7 @@ impl<'de> Deserialize<'de> for Tree {
             nodes: Vec<Node>,
             feature_offset: usize,
             feature_names: Vec<String>,
+            feature_types: Vec<String>,
         }
 
         let helper = TreeHelper::deserialize(deserializer)?;
@@ -78,6 +88,7 @@ impl<'de> Deserialize<'de> for Tree {
             nodes: helper.nodes,
             feature_offset: helper.feature_offset,
             feature_names: Arc::new(helper.feature_names),
+            feature_types: Arc::new(helper.feature_types),
         })
     }
 }
@@ -332,16 +343,21 @@ impl Default for Predicate {
 }
 
 impl Tree {
-    pub fn new(feature_names: Arc<Vec<String>>) -> Self {
+    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<String>>) -> Self {
         Tree {
             nodes: Vec::new(),
             feature_offset: 0,
             feature_names,
+            feature_types,
         }
     }
 
-    pub fn load(tree_dict: &serde_json::Value, feature_names: Arc<Vec<String>>) -> Self {
-        let mut tree = Tree::new(feature_names);
+    pub fn load(
+        tree_dict: &serde_json::Value,
+        feature_names: Arc<Vec<String>>,
+        feature_types: Arc<Vec<String>>,
+    ) -> Result<Self, String> {
+        let mut tree = Tree::new(feature_names, feature_types);
 
         let split_indices: Vec<i32> = tree_dict["split_indices"]
             .as_array()
@@ -381,6 +397,14 @@ impl Tree {
             .unwrap_or_default();
 
         for i in 0..left_children.len() {
+            let split_type = if ["int", "float"]
+                .contains(&tree.feature_types[split_indices[i] as usize].as_str())
+            {
+                SplitType::Numerical
+            } else {
+                panic!("Unexpected feature type")
+            };
+
             let node = Node {
                 split_index: if left_children[i] == u32::MAX {
                     LEAF_NODE
@@ -391,6 +415,7 @@ impl Tree {
                 left_child: left_children[i],
                 right_child: right_children[i],
                 weight: weights.get(i).cloned().unwrap_or(0.0),
+                split_type,
             };
             tree.nodes.push(node);
         }
@@ -401,7 +426,7 @@ impl Tree {
             .position(|name| name == &tree.feature_names[0])
             .unwrap_or(0);
 
-        tree
+        Ok(tree)
     }
 
     pub fn predict(&self, features: &[f64]) -> f64 {
@@ -521,6 +546,7 @@ impl Tree {
                 nodes: new_nodes,
                 feature_offset: self.feature_offset,
                 feature_names: self.feature_names.clone(),
+                feature_types: self.feature_types.clone(),
             })
         } else {
             debug!("No changes made to the tree structure.");
@@ -538,19 +564,32 @@ impl Tree {
 
 impl Default for Tree {
     fn default() -> Self {
-        Tree::new(Arc::new(vec![]))
+        Tree::new(Arc::new(vec![]), Arc::new(vec![]))
     }
 }
 
 pub struct Trees {
-    pub trees: Vec<Tree>, // fix: this probably shouldn't be pub
+    pub trees: Vec<Tree>, // fix: this probably shouldn't be pub. it is used in integration tests though
     pub feature_names: Arc<Vec<String>>,
-    base_score: f64,
+    pub base_score: f64,
+    feature_types: Arc<Vec<String>>,
     objective: Objective,
 }
 
+impl Default for Trees {
+    fn default() -> Self {
+        Trees {
+            trees: vec![],
+            feature_names: Arc::new(vec![]),
+            feature_types: Arc::new(vec![]),
+            base_score: 0.0,
+            objective: Objective::SquaredError,
+        }
+    }
+}
+
 impl Trees {
-    pub fn load(model_data: &serde_json::Value) -> Self {
+    pub fn load(model_data: &serde_json::Value) -> Result<Self, ArrowError> {
         let base_score = model_data["learner"]["learner_model_param"]["base_score"]
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
@@ -567,28 +606,51 @@ impl Trees {
                 .unwrap_or_default(),
         );
 
-        let trees: Vec<Tree> = model_data["learner"]["gradient_booster"]["model"]["trees"]
+        let feature_types: Arc<Vec<String>> = Arc::new(
+            model_data["learner"]["feature_types"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
+
+        let trees: Result<Vec<Tree>, ArrowError> = model_data["learner"]["gradient_booster"]
+            ["model"]["trees"]
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|tree_data| Tree::load(tree_data, Arc::clone(&feature_names)))
+                    .map(|tree_data| {
+                        Tree::load(
+                            tree_data,
+                            Arc::clone(&feature_names),
+                            Arc::clone(&feature_types),
+                        )
+                        .map_err(ArrowError::ParseError)
+                    })
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap();
+
+        let trees = trees?;
 
         let objective = match model_data["learner"]["learner_model_param"]["objective"]
             .as_str()
             .unwrap_or("reg:squarederror")
         {
             "reg:squarederror" => Objective::SquaredError,
-            _ => panic!("Unsupported objective"),
+            _ => return Err(ArrowError::ParseError("Unsupported objective".to_string())),
         };
-        Trees {
+
+        Ok(Trees {
             base_score,
             trees,
             feature_names,
+            feature_types,
             objective,
-        }
+        })
     }
 
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
@@ -596,26 +658,62 @@ impl Trees {
         let mut builder = Float64Builder::with_capacity(num_rows);
         let mut features = vec![0.0; self.feature_names.len()];
 
-        let feature_columns: Vec<&Float64Array> = self
+        let feature_columns: Vec<Result<Arc<dyn Array>, ArrowError>> = self
             .feature_names
             .iter()
-            .map(|name| {
-                batch
-                    .column_by_name(name)
-                    .and_then(|col| col.as_any().downcast_ref::<Float64Array>())
-                    .ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "Missing or invalid feature column: {}",
-                            name
-                        ))
-                    })
+            .zip(self.feature_types.iter())
+            .map(|(name, typ)| {
+                let col = batch.column_by_name(name).ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(format!("Missing feature column: {}", name))
+                })?;
+                match typ.as_str() {
+                    "float" => {
+                        let array =
+                            col.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
+                                ArrowError::InvalidArgumentError(format!(
+                                    "Expected Float64Array for column: {}",
+                                    name
+                                ))
+                            })?;
+                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
+                    }
+                    "int" => {
+                        let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                            ArrowError::InvalidArgumentError(format!(
+                                "Expected Int64Array for column: {}",
+                                name
+                            ))
+                        })?;
+                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
+                    }
+                    _ => Err(ArrowError::InvalidArgumentError(format!(
+                        "Unsupported feature type: {}",
+                        typ
+                    ))),
+                }
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
+
+        let feature_columns = feature_columns.into_iter().collect::<Result<Vec<_>, _>>()?;
 
         for row in 0..num_rows {
             let mut score = self.base_score;
             for (i, col) in feature_columns.iter().enumerate() {
-                features[i] = col.value(row);
+                features[i] = if col.as_any().is::<Float64Array>() {
+                    col.as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap()
+                        .value(row)
+                } else if col.as_any().is::<Int64Array>() {
+                    col.as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap()
+                        .value(row) as f64
+                } else {
+                    return Err(ArrowError::InvalidArgumentError(
+                        "Unsupported array type".to_string(),
+                    ));
+                };
             }
             for tree in &self.trees {
                 score += tree.predict(&features);
@@ -644,6 +742,7 @@ impl Trees {
         Trees {
             trees: pruned_trees,
             feature_names: self.feature_names.clone(),
+            feature_types: self.feature_types.clone(),
             base_score: self.base_score,
             objective: self.objective.clone(),
         }
@@ -659,7 +758,13 @@ impl Trees {
             depths.iter().sum::<usize>() as f64 / depths.len() as f64
         );
         println!("Max tree depth: {}", depths.iter().max().unwrap_or(&0));
-        println!("Total number of nodes: {}", self.trees.iter().map(|tree| tree.num_nodes()).sum::<usize>());
+        println!(
+            "Total number of nodes: {}",
+            self.trees
+                .iter()
+                .map(|tree| tree.num_nodes())
+                .sum::<usize>()
+        );
     }
 }
 
@@ -684,6 +789,7 @@ mod tests {
                 left_child: 1,
                 right_child: 2,
                 weight: 0.0,
+                split_type: SplitType::Numerical,
             },
             Node {
                 split_index: LEAF_NODE,
@@ -691,6 +797,7 @@ mod tests {
                 left_child: 0,
                 right_child: 0,
                 weight: -1.0,
+                split_type: SplitType::Numerical,
             },
             Node {
                 split_index: LEAF_NODE,
@@ -698,12 +805,14 @@ mod tests {
                 left_child: 0,
                 right_child: 0,
                 weight: 1.0,
+                split_type: SplitType::Numerical,
             },
         ];
         Tree {
             nodes,
             feature_offset: 0,
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
         }
     }
 
@@ -716,6 +825,7 @@ mod tests {
                     left_child: 1,
                     right_child: 2,
                     weight: 0.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: 1,
@@ -723,6 +833,7 @@ mod tests {
                     left_child: 3,
                     right_child: 4,
                     weight: 0.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: 2,
@@ -730,6 +841,7 @@ mod tests {
                     left_child: 5,
                     right_child: 6,
                     weight: 0.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: LEAF_NODE,
@@ -737,6 +849,7 @@ mod tests {
                     left_child: 0,
                     right_child: 0,
                     weight: -2.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: LEAF_NODE,
@@ -744,6 +857,7 @@ mod tests {
                     left_child: 0,
                     right_child: 0,
                     weight: -1.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: LEAF_NODE,
@@ -751,6 +865,7 @@ mod tests {
                     left_child: 0,
                     right_child: 0,
                     weight: 1.0,
+                    split_type: SplitType::Numerical,
                 },
                 Node {
                     split_index: LEAF_NODE,
@@ -758,6 +873,7 @@ mod tests {
                     left_child: 0,
                     right_child: 0,
                     weight: 2.0,
+                    split_type: SplitType::Numerical,
                 },
             ],
             feature_offset: 0,
@@ -765,6 +881,11 @@ mod tests {
                 "feature0".to_string(),
                 "feature1".to_string(),
                 "feature2".to_string(),
+            ]),
+            feature_types: Arc::new(vec![
+                "float".to_string(),
+                "float".to_string(),
+                "float".to_string(),
             ]),
         }
     }
@@ -869,6 +990,7 @@ mod tests {
             "learner": {
                 "learner_model_param": { "base_score": "0.5" },
                 "feature_names": ["feature0", "feature1"],
+                "feature_types": ["float", "int"],
                 "gradient_booster": {
                     "model": {
                         "trees": [
@@ -878,6 +1000,13 @@ mod tests {
                                 "left_children": [1],
                                 "right_children": [2],
                                 "base_weights": [0.0, -1.0, 1.0]
+                            },
+                            {
+                                "split_indices": [1],
+                                "split_conditions": [1],
+                                "left_children": [3],
+                                "right_children": [4],
+                                "base_weights": [0.0, -2.0, -1.0, 1.0, 2.0]
                             }
                         ]
                     }
@@ -885,13 +1014,13 @@ mod tests {
             }
         });
 
-        let trees = Trees::load(&model_data);
+        let trees = Trees::load(&model_data).unwrap();
         assert_eq!(trees.base_score, 0.5);
         assert_eq!(
             trees.feature_names,
             Arc::new(vec!["feature0".to_string(), "feature1".to_string()])
         );
-        assert_eq!(trees.trees.len(), 1);
+        assert_eq!(trees.trees.len(), 2);
         assert_eq!(trees.trees[0].nodes.len(), 1);
     }
 
@@ -901,6 +1030,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
             objective: Objective::SquaredError,
         };
 
@@ -919,6 +1049,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
             objective: Objective::SquaredError,
         };
         assert_eq!(trees.num_trees(), 2);
@@ -930,6 +1061,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
             objective: Objective::SquaredError,
         };
         assert_eq!(trees.tree_depths(), vec![2, 2]);
@@ -941,6 +1073,7 @@ mod tests {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
             objective: Objective::SquaredError,
         };
 

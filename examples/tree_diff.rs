@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let model_data = load_model_data(MODEL_PATH)?;
     let batch = create_record_batch()?;
-    let trees = Trees::load(&model_data);
+    let trees = Trees::load(&model_data)?;
     let predictions: PrimitiveArray<Float64Type> = trees.predict_batch(&batch)?;
     println!("Regular tree prediction successful");
 

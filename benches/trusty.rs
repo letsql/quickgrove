@@ -8,10 +8,10 @@ use gbdt::decision_tree::Data;
 use gbdt::gradient_boost::GBDT;
 use rayon::prelude::*;
 use serde_json::Value;
-use std::sync::Arc;
-use std::io::BufReader;
 use std::error::Error;
 use std::fs::File;
+use std::io::BufReader;
+use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
 
@@ -296,17 +296,16 @@ fn preprocess_batches(batches: &[RecordBatch]) -> Result<Vec<RecordBatch>, Box<d
 fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
 
-    let model_file = File::open("models/pricing-model-100-mod.json")
-        .or_else(|_| File::open("../models/pricing-model-100-mod.json"))
+    let model_file = File::open("tests/models/pricing-model-100-mod.json")
         .map_err(|e| format!("Failed to open model file: {}", e))?;
 
     let reader = BufReader::new(model_file);
     let model_data: Value =
         serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-    let trees = Trees::load(&model_data);
+    let trees = Trees::load(&model_data)?;
 
-    let raw_batches = read_csv_to_batches("diamonds.csv", 1024)?;
+    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 1024)?;
     let preprocessed_batches = preprocess_batches(&raw_batches)?;
     println!(
         "Raw batches total rows: {}",
