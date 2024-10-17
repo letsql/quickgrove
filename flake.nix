@@ -9,7 +9,7 @@
     poetry2nix.url = "github:nix-community/poetry2nix";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, ... }:
+  outputs = { nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [
@@ -28,9 +28,7 @@
           in
           (craneLib.filterCargoSources path type) ||
           (baseName == "diamonds.csv") ||
-          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null) ||
-          (baseName == "pyproject.toml") ||
-          (baseName == "poetry.lock");
+          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null);
 
         commonArgs = {
           src = pkgs.lib.cleanSourceWith {
@@ -69,8 +67,6 @@
         poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
           projectDir = ./.;
           preferWheels = true;
-          # You can add overrides here if needed
-          # overrides = pkgs.poetry2nix.overrides.withDefaults (self: super: { ... });
           overrides = pkgs.poetry2nix.overrides.withDefaults
             (self: super: {
               atpublic = super.atpublic.overridePythonAttrs
@@ -90,7 +86,6 @@
             });
         };
 
-        # Create a Python environment that includes your application and its dependencies
         pythonEnv = poetryApplication.dependencyEnv;
 
       in
