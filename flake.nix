@@ -6,12 +6,16 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
+    poetry2nix.url = "github:nix-community/poetry2nix";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, ... }:
+  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
+        overlays = [
+          (import rust-overlay)
+          poetry2nix.overlays.default
+        ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
@@ -24,7 +28,9 @@
           in
           (craneLib.filterCargoSources path type) ||
           (baseName == "diamonds.csv") ||
-          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null);
+          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null) ||
+          (baseName == "pyproject.toml") ||
+          (baseName == "poetry.lock");
 
         commonArgs = {
           src = pkgs.lib.cleanSourceWith {
@@ -45,7 +51,6 @@
           ];
         };
 
-        # Build *just* the cargo dependencies
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         trusty = craneLib.buildPackage (commonArgs // {
@@ -60,11 +65,39 @@
         trustyTests = craneLib.cargoTest (commonArgs // {
           inherit cargoArtifacts;
         });
+        
+        poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
+          projectDir = ./.;
+          preferWheels = true;
+          # You can add overrides here if needed
+          # overrides = pkgs.poetry2nix.overrides.withDefaults (self: super: { ... });
+          overrides = pkgs.poetry2nix.overrides.withDefaults
+            (self: super: {
+              atpublic = super.atpublic.overridePythonAttrs
+              (
+                old: {
+                  buildInputs = (old.buildInputs or [ ]) ++ [super.hatchling];
+                }
+              );
+              xgboost = super.xgboost.overridePythonAttrs (old: {
+              } // pkgs.lib.attrsets.optionalAttrs pkgs.stdenv.isDarwin {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ super.cmake ];
+                cmakeDir = "../cpp_src";
+                preBuild = ''
+                  cd ..
+                '';
+              });
+            });
+        };
+
+        # Create a Python environment that includes your application and its dependencies
+        pythonEnv = poetryApplication.dependencyEnv;
 
       in
       {
         packages = {
           default = trusty;
+          pyApp = poetryApplication;
         };
 
         checks = {
@@ -74,9 +107,13 @@
             trustyTests;
         };
 
-        devShells.default = craneLib.devShell {
-          checks = self.checks.${system};
+        devShells.default = pkgs.mkShell {
           inputsFrom = [ trusty ];
+          buildInputs = [
+            rustToolchain
+            pythonEnv
+            pkgs.poetry
+          ];
         };
       });
 }
