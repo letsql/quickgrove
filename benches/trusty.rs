@@ -8,13 +8,12 @@ use gbdt::decision_tree::Data;
 use gbdt::gradient_boost::GBDT;
 use rayon::prelude::*;
 use serde_json::Value;
-use std::fs::File;
-use std::io::BufReader;
 use std::sync::Arc;
+use std::io::BufReader;
+use std::error::Error;
+use std::fs::File;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
-
-use std::error::Error;
 
 fn run_prediction(
     trees: &Trees,
@@ -85,7 +84,7 @@ fn read_csv_to_batches(path: &str, batch_size: usize) -> Result<Vec<RecordBatch>
         Field::new("z", DataType::Float64, false),
     ]));
 
-    let mut csv = ReaderBuilder::new(schema)
+    let csv = ReaderBuilder::new(schema)
         .with_header(true)
         .with_batch_size(batch_size)
         .build(file)?;
@@ -369,5 +368,19 @@ fn bench_gbdt(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-criterion_group!(benches, bench_trusty, bench_gbdt);
+// this seems a long way to remove unused Result warning. check if there is a better way of doing
+// away with that warning
+fn bench_trusty_wrapper(c: &mut Criterion) {
+    bench_trusty(c).unwrap_or_else(|e| eprintln!("Error in bench_trusty: {}", e));
+}
+
+fn bench_gbdt_wrapper(c: &mut Criterion) {
+    bench_gbdt(c).unwrap_or_else(|e| eprintln!("Error in bench_gbdt: {}", e));
+}
+
+criterion_group! {
+    name = benches;
+    config = Criterion::default();
+    targets = bench_trusty_wrapper, bench_gbdt_wrapper
+}
 criterion_main!(benches);

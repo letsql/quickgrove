@@ -543,9 +543,9 @@ impl Default for Tree {
 }
 
 pub struct Trees {
-    base_score: f64,
-    pub trees: Vec<Tree>,
+    pub trees: Vec<Tree>, // fix: this probably shouldn't be pub
     pub feature_names: Arc<Vec<String>>,
+    base_score: f64,
     objective: Objective,
 }
 
