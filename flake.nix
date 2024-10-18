@@ -23,12 +23,27 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         
-        customFilter = path: type:
-          let baseName = baseNameOf (toString path);
+        debug = msg: value:
+          builtins.trace "${msg}: ${builtins.toJSON value}" value;
+      
+        allowedExtensions = [
+          "csv"
+          "json"
+        ];
+      
+        hasAllowedExtension = path:
+          let
+            extension = pkgs.lib.lists.last (pkgs.lib.strings.splitString "." (baseNameOf (toString path)));
           in
-          (craneLib.filterCargoSources path type) ||
-          (baseName == "diamonds.csv") ||
-          (baseName == "pricing-model-100-mod.json" && (builtins.match ".*models.*" path) != null);
+          debug "hasAllowedExtension" (pkgs.lib.lists.any (ext: ext == extension) allowedExtensions);
+      
+        customFilter = path: type:
+          let
+            isCargoSource = craneLib.filterCargoSources path type;
+            isAllowed = type == "regular" && hasAllowedExtension path;
+            result = isCargoSource || isAllowed;
+          in
+          debug "customFilter ${toString path}" result;
 
         commonArgs = {
           src = pkgs.lib.cleanSourceWith {
