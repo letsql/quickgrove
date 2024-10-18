@@ -1291,7 +1291,6 @@ dependencies = [
  "colored",
  "criterion",
  "gbdt",
- "log",
  "rayon",
  "serde",
  "serde_json",

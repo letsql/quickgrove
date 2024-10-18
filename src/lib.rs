@@ -2,7 +2,6 @@ use arrow::array::{Array, Float64Array, Float64Builder, Int64Array};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use colored::Colorize;
-use log::debug;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
@@ -17,7 +16,7 @@ pub enum SplitType {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Node {
-    split_index: i32, // LEAF_NODE for leaf nodes
+    split_index: i32,
     split_condition: f64,
     left_child: u32,
     right_child: u32,
@@ -481,9 +480,6 @@ impl Tree {
         let mut index_map = HashMap::new();
         let mut tree_changed = false;
 
-        debug!("Starting pruning for tree");
-        debug!("Initial node count: {}", self.nodes.len());
-
         for (old_index, node) in self.nodes.iter().enumerate() {
             let mut new_node = node.clone();
 
@@ -512,15 +508,12 @@ impl Tree {
             }
 
             if new_node.left_child == u32::MAX && new_node.right_child == u32::MAX {
-                debug!("Converting internal node {} to leaf", old_index);
                 new_node.split_index = LEAF_NODE;
                 tree_changed = true;
             } else if new_node.left_child == u32::MAX {
-                debug!("Replacing node {} with its right child", old_index);
                 new_node = self.nodes[new_node.right_child as usize].clone();
                 tree_changed = true;
             } else if new_node.right_child == u32::MAX {
-                debug!("Replacing node {} with its left child", old_index);
                 new_node = self.nodes[new_node.left_child as usize].clone();
                 tree_changed = true;
             }
@@ -538,10 +531,8 @@ impl Tree {
         }
 
         if new_nodes.is_empty() {
-            debug!("All nodes were pruned from the tree. Dropping the tree.");
             None
         } else if tree_changed || new_nodes.len() != self.nodes.len() {
-            debug!("Tree structure changed. Keeping modified tree.");
             Some(Tree {
                 nodes: new_nodes,
                 feature_offset: self.feature_offset,
@@ -549,7 +540,6 @@ impl Tree {
                 feature_types: self.feature_types.clone(),
             })
         } else {
-            debug!("No changes made to the tree structure.");
             Some(self.clone())
         }
     }

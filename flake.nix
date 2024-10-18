@@ -35,15 +35,15 @@
           let
             extension = pkgs.lib.lists.last (pkgs.lib.strings.splitString "." (baseNameOf (toString path)));
           in
-          debug "hasAllowedExtension" (pkgs.lib.lists.any (ext: ext == extension) allowedExtensions);
-      
+          pkgs.lib.lists.any (ext: ext == extension) allowedExtensions;
+
         customFilter = path: type:
           let
             isCargoSource = craneLib.filterCargoSources path type;
             isAllowed = type == "regular" && hasAllowedExtension path;
-            result = isCargoSource || isAllowed;
           in
-          debug "customFilter ${toString path}" result;
+          isCargoSource || isAllowed;
+      
 
         commonArgs = {
           src = pkgs.lib.cleanSourceWith {
