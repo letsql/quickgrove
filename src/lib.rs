@@ -1034,6 +1034,24 @@ mod tests {
     }
 
     #[test]
+    fn test_trees_predict_batch_with_missing_values() {
+        let trees = Trees {
+            base_score: 0.5,
+            trees: vec![create_sample_tree()],
+            feature_names: Arc::new(vec!["feature0".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string()]),
+            objective: Objective::SquaredError,
+        };
+
+        let schema = Schema::new(vec![Field::new("feature0", DataType::Float64, true)]);
+        let feature_data = Float64Array::from(vec![Some(0.4), Some(0.6), None, Some(0.5)]);
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(feature_data)]).unwrap();
+
+        let predictions = trees.predict_batch(&batch).unwrap();
+        assert_eq!(predictions.value(2), -0.5); // Missing value, default left: 0.5 (base_score) + -1.0
+    }
+
+    #[test]
     fn test_trees_num_trees() {
         let trees = Trees {
             base_score: 0.5,
