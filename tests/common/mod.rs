@@ -4,7 +4,6 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use gbdt::decision_tree::Data;
 use gbdt::gradient_boost::GBDT;
-use rayon::prelude::*;
 use serde_json::Value;
 use std::error::Error;
 use std::fs::File;
@@ -36,10 +35,7 @@ pub fn read_csv_to_batches(
         .with_batch_size(batch_size)
         .build(file)?;
 
-    let mut batches = Vec::new();
-    for batch in csv {
-        batches.push(batch?);
-    }
+    let batches: Vec<_> = csv.take(1).collect::<Result<_, _>>()?;
 
     Ok(batches)
 }
@@ -232,7 +228,7 @@ pub fn run_prediction_with_gbdt(
     )]));
 
     let result: Vec<RecordBatch> = batches
-        .par_iter()
+        .iter()
         .map(|batch| {
             let mut result = Vec::new();
             for row in 0..batch.num_rows() {
