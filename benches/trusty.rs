@@ -342,10 +342,10 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
 fn bench_gbdt(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
 
-    let model_path = "models/pricing-model-100-mod.json";
+    let model_path = "tests/models/pricing-model-100-mod.json";
     let model = GBDT::from_xgboost_json_used_feature(model_path).expect("failed to load model");
 
-    let raw_batches = read_csv_to_batches("diamonds.csv", 1024)?;
+    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 1024)?;
     let preprocessed_batches = preprocess_batches(&raw_batches)?;
     println!(
         "Raw batches total rows: {}",
