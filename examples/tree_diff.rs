@@ -8,7 +8,7 @@ use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
 
-const MODEL_PATH: &str = "models/pricing-model-100-mod.json";
+const MODEL_PATH: &str = "tests/models/pricing-model-100-mod.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Running tree predictions example");
@@ -26,6 +26,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pruned_trees = trees.prune(&predicate);
     let pruned_predictions: PrimitiveArray<Float64Type> = pruned_trees.predict_batch(&batch)?;
     println!("Pruned tree prediction successful");
+    println!("Original Tree: {:}", trees.trees[0]);
+    println!("Pruned Tree: {:}", pruned_trees.trees[0]);
     let diff = trees.trees[0].diff(&pruned_trees.trees[0]);
     println!("Diff: {:}", diff);
     println!("Original predictions: {:}", predictions.value(0));

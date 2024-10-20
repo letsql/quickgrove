@@ -479,10 +479,11 @@ impl Tree {
         let mut new_nodes = Vec::new();
         let mut index_map = HashMap::new();
         let mut tree_changed = false;
-
+    
         for (old_index, node) in self.nodes.iter().enumerate() {
             let mut new_node = node.clone();
-
+            let mut should_prune = false;
+    
             if node.split_index != LEAF_NODE {
                 let feature_index = self.feature_offset + node.split_index as usize;
                 if let Some(feature_name) = feature_names.get(feature_index) {
@@ -493,12 +494,14 @@ impl Tree {
                                     if *value < node.split_condition {
                                         new_node.right_child = u32::MAX;
                                         tree_changed = true;
+                                        should_prune = true;
                                     }
                                 }
                                 Condition::GreaterThanOrEqual(value) => {
                                     if *value >= node.split_condition {
                                         new_node.left_child = u32::MAX;
                                         tree_changed = true;
+                                        should_prune = true;
                                     }
                                 }
                             }
@@ -506,39 +509,39 @@ impl Tree {
                     }
                 }
             }
-
-            if new_node.left_child == u32::MAX && new_node.right_child == u32::MAX {
-                new_node.split_index = LEAF_NODE;
-                tree_changed = true;
-            } else if new_node.left_child == u32::MAX {
-                new_node = self.nodes[new_node.right_child as usize].clone();
-                tree_changed = true;
-            } else if new_node.right_child == u32::MAX {
-                new_node = self.nodes[new_node.left_child as usize].clone();
-                tree_changed = true;
+    
+            if should_prune {
+                if new_node.left_child == u32::MAX {
+                    new_node = self.nodes[new_node.right_child as usize].clone();
+                } else if new_node.right_child == u32::MAX {
+                    new_node = self.nodes[new_node.left_child as usize].clone();
+                }
             }
-
+    
             let new_index = new_nodes.len() as u32;
             index_map.insert(old_index as u32, new_index);
             new_nodes.push(new_node);
         }
-
+    
+        // Update child indices
         for node in &mut new_nodes {
             if node.split_index != LEAF_NODE {
                 node.left_child = *index_map.get(&node.left_child).unwrap_or(&u32::MAX);
                 node.right_child = *index_map.get(&node.right_child).unwrap_or(&u32::MAX);
             }
         }
-
+    
         if new_nodes.is_empty() {
             None
-        } else if tree_changed || new_nodes.len() != self.nodes.len() {
-            Some(Tree {
+        } else if tree_changed {
+            // Recursively prune if the tree still contains predicate nodes
+            let new_tree = Tree {
                 nodes: new_nodes,
                 feature_offset: self.feature_offset,
                 feature_names: self.feature_names.clone(),
                 feature_types: self.feature_types.clone(),
-            })
+            };
+            new_tree.prune(predicate, feature_names)
         } else {
             Some(self.clone())
         }
@@ -805,7 +808,66 @@ mod tests {
             feature_types: Arc::new(vec!["float".to_string()]),
         }
     }
-
+    fn create_tree_nested_features() -> Tree {
+    //              feature0 < 1.0
+    //             /             \
+    //    feature0 < 0.5         Leaf (2.0)
+    //   /           \
+    // Leaf (-1.0)  Leaf (1.0)
+        Tree {
+            nodes: vec![
+                Node {
+                    split_index: 0,  // feature0
+                    split_condition: 1.0,
+                    left_child: 1,
+                    right_child: 2,
+                    weight: 0.0,
+                    split_type: SplitType::Numerical,
+                },
+                Node {
+                    split_index: 0,  // feature0 (nested)
+                    split_condition: 0.5,
+                    left_child: 3,
+                    right_child: 4,
+                    weight: 0.0,
+                    split_type: SplitType::Numerical,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: 2.0,
+                    split_type: SplitType::Numerical,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: -1.0,
+                    split_type: SplitType::Numerical,
+                },
+                Node {
+                    split_index: LEAF_NODE,
+                    split_condition: 0.0,
+                    left_child: 0,
+                    right_child: 0,
+                    weight: 1.0,
+                    split_type: SplitType::Numerical,
+                },
+            ],
+            feature_offset: 0,
+            feature_names: Arc::new(vec![
+                "feature0".to_string(),
+                "feature1".to_string(),
+            ]),
+            feature_types: Arc::new(vec![
+                "float".to_string(),
+                "float".to_string(),
+            ]),
+        }
+    }
     fn create_sample_tree_deep() -> Tree {
         Tree {
             nodes: vec![
@@ -956,7 +1018,7 @@ mod tests {
 
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
-        predicate.add_condition("feature1".to_string(), Condition::LessThan(0.69));
+        predicate.add_condition("feature1".to_string(), Condition::LessThan(0.6));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
 
@@ -966,10 +1028,11 @@ mod tests {
         assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
-        predicate.add_condition("feature1".to_string(), Condition::GreaterThanOrEqual(0.7));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
+        predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
+        println!("{:}", pruned_tree);
         assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), -1.0);
         assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -2.0);
     }
@@ -1092,5 +1155,14 @@ mod tests {
         assert_eq!(pruned_trees.trees.len(), 2);
         assert_eq!(pruned_trees.trees[0].nodes.len(), 3);
         assert_eq!(pruned_trees.trees[1].nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_trees_nested_features() {
+        let tree = create_tree_nested_features();
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
+        let pruned_tree = tree.prune(&predicate, &["feature0".to_string(), "feature1".to_string()]).unwrap();
+        assert_eq!(pruned_tree.predict(&[0.4, 0.0]), -1.0);
     }
 }
