@@ -367,6 +367,93 @@ fn bench_gbdt(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+pub fn load_airline_data() -> Result<Vec<RecordBatch>, Box<dyn std::error::Error>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("gender", DataType::Int64, false),
+        Field::new("customer_type", DataType::Int64, false),
+        Field::new("age", DataType::Int64, false),
+        Field::new("type_of_travel", DataType::Int64, false),
+        Field::new("class", DataType::Int64, false),
+        Field::new("flight_distance", DataType::Int64, false),
+        Field::new("inflight_wifi_service", DataType::Int64, false),
+        Field::new("departure/arrival_time_convenient", DataType::Int64, false),
+        Field::new("ease_of_online_booking", DataType::Int64, false),
+        Field::new("gate_location", DataType::Int64, false),
+        Field::new("food_and_drink", DataType::Int64, false),
+        Field::new("online_boarding", DataType::Int64, false),
+        Field::new("seat_comfort", DataType::Int64, false),
+        Field::new("inflight_entertainment", DataType::Int64, false),
+        Field::new("on-board_service", DataType::Int64, false),
+        Field::new("leg_room_service", DataType::Int64, false),
+        Field::new("baggage_handling", DataType::Int64, false),
+        Field::new("checkin_service", DataType::Int64, false),
+        Field::new("inflight_service", DataType::Int64, false),
+        Field::new("cleanliness", DataType::Int64, false),
+        Field::new("departure_delay_in_minutes", DataType::Int64, false),
+        Field::new("arrival_delay_in_minutes", DataType::Float64, true),
+    ]));
+
+    let file = File::open("tests/data/airline-passenger-satisfaction.csv")?;
+    let csv_reader = ReaderBuilder::new(schema)
+        .with_header(true)
+        .with_batch_size(1024)
+        .build(file)?;
+
+    let mut batches = Vec::new();
+    for batch in csv_reader {
+        batches.push(batch?);
+    }
+
+    Ok(batches)
+}
+
+fn bench_airline(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
+    let rt = Runtime::new()?;
+
+    let model_file = File::open("tests/models/airline-satisfaction.json")
+        .map_err(|e| format!("Failed to open model file: {}", e))?;
+
+    let reader = BufReader::new(model_file);
+    let model_data: Value =
+        serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    let trees = Trees::load(&model_data)?;
+
+    let preprocessed_batches = load_airline_data()?;
+    println!(
+        "total rows: {}",
+        preprocessed_batches
+            .iter()
+            .map(|b| b.num_rows())
+            .sum::<usize>()
+    );
+    let mut predicate = Predicate::new();
+    predicate.add_condition(
+        "online_boarding".to_string(),
+        Condition::GreaterThanOrEqual(4.0),
+    );
+    predicate.add_condition(
+        "type_of_travel".to_string(),
+        Condition::GreaterThanOrEqual(1.0),
+    );
+
+    let pruned_trees = trees.prune(&predicate);
+    println!("{:}", trees.trees[0]);
+    println!("{:}", pruned_trees.trees[0]);
+
+    c.bench_function("airline_no_pruning", |b| {
+        b.to_async(&rt)
+            .iter(|| async { run_prediction(&trees, &preprocessed_batches).unwrap() })
+    });
+
+    c.bench_function("airline_with_pruning", |b| {
+        b.to_async(&rt).iter(|| async {
+            run_prediction_with_predicates(&pruned_trees, &preprocessed_batches).unwrap()
+        })
+    });
+
+    Ok(())
+}
 // this seems a long way to remove unused Result warning. check if there is a better way of doing
 // away with that warning
 fn bench_trusty_wrapper(c: &mut Criterion) {
@@ -377,9 +464,13 @@ fn bench_gbdt_wrapper(c: &mut Criterion) {
     bench_gbdt(c).unwrap_or_else(|e| eprintln!("Error in bench_gbdt: {}", e));
 }
 
+fn bench_airline_wrapper(c: &mut Criterion) {
+    bench_airline(c).unwrap_or_else(|e| eprintln!("Error in bench_gbdt: {}", e));
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = bench_trusty_wrapper, bench_gbdt_wrapper
+    targets = bench_trusty_wrapper, bench_gbdt_wrapper, bench_airline_wrapper
 }
 criterion_main!(benches);

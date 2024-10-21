@@ -10,6 +10,8 @@ python = "^3.10"
 xgboost = "^2.1.1"
 pandas = "^2.2.3"
 ipython = "^8.28.0"
+kagglehub = "^0.3.3"
+scikit-learn = "^1.5.2"
 
 
 [build-system]
