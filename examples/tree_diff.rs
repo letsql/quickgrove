@@ -32,6 +32,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Diff: {:}", diff);
     println!("Original predictions: {:}", predictions.value(0));
     println!("Pruned predictions: {:}", pruned_predictions.value(0));
+    let auto_pruned = trees.auto_prune(
+        &batch,
+        &Arc::new(vec!["carat".to_string(), "depth".to_string()]),
+    )?;
+    println!("Auto pruned tree: {:}", auto_pruned.trees[0]);
+    let auto_pruned_predications: PrimitiveArray<Float64Type> =
+        auto_pruned.predict_batch(&batch)?;
+
+    println!("Raw Tree {}", predictions.value(0));
+    println!("Pruned Tree {}", pruned_predictions.value(0));
+    println!("Auto Pruned Tree {}", auto_pruned_predications.value(0));
+
     Ok(())
 }
 

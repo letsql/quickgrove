@@ -25,6 +25,18 @@ fn run_prediction(
     Ok(())
 }
 
+fn run_prediction_with_autoprune(
+    trees: &Trees,
+    batches: &[RecordBatch],
+    feature_names: &Arc<Vec<String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    batches.par_iter().for_each(|batch| {
+        let auto_pruned = trees.auto_prune(batch, feature_names).unwrap();
+        let _prediction = auto_pruned.predict_batch(batch);
+    });
+    Ok(())
+}
+
 fn run_prediction_with_predicates(
     trees: &Trees,
     batches: &[RecordBatch],
@@ -305,7 +317,7 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
 
     let trees = Trees::load(&model_data)?;
 
-    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 1024)?;
+    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 8192 / 8)?;
     let preprocessed_batches = preprocess_batches(&raw_batches)?;
     println!(
         "Raw batches total rows: {}",
@@ -336,6 +348,16 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
         })
     });
 
+    c.bench_function("trusty_with_autopruning", |b| {
+        b.to_async(&rt).iter(|| async {
+            run_prediction_with_autoprune(
+                &pruned_trees,
+                &preprocessed_batches,
+                &Arc::new(vec!["carat".to_string(), "depth".to_string()]),
+            )
+            .unwrap()
+        })
+    });
     Ok(())
 }
 
@@ -345,7 +367,7 @@ fn bench_gbdt(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let model_path = "tests/models/pricing-model-100-mod.json";
     let model = GBDT::from_xgboost_json_used_feature(model_path).expect("failed to load model");
 
-    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 1024)?;
+    let raw_batches = read_csv_to_batches("tests/data/diamonds.csv", 8192 / 8)?;
     let preprocessed_batches = preprocess_batches(&raw_batches)?;
     println!(
         "Raw batches total rows: {}",
@@ -393,7 +415,7 @@ pub fn load_airline_data() -> Result<Vec<RecordBatch>, Box<dyn std::error::Error
         Field::new("arrival_delay_in_minutes", DataType::Float64, true),
     ]));
 
-    let file = File::open("tests/data/airline-passenger-satisfaction.csv")?;
+    let file = File::open("tests/data/airline-passenger-satisfaction-boarding.csv")?;
     let csv_reader = ReaderBuilder::new(schema)
         .with_header(true)
         .with_batch_size(1024)
@@ -432,14 +454,9 @@ fn bench_airline(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
         "online_boarding".to_string(),
         Condition::GreaterThanOrEqual(4.0),
     );
-    predicate.add_condition(
-        "type_of_travel".to_string(),
-        Condition::GreaterThanOrEqual(1.0),
-    );
 
+    predicate.add_condition("type_of_travel".to_string(), Condition::LessThan(1.0));
     let pruned_trees = trees.prune(&predicate);
-    println!("{:}", trees.trees[0]);
-    println!("{:}", pruned_trees.trees[0]);
 
     c.bench_function("airline_no_pruning", |b| {
         b.to_async(&rt)
@@ -449,6 +466,20 @@ fn bench_airline(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     c.bench_function("airline_with_pruning", |b| {
         b.to_async(&rt).iter(|| async {
             run_prediction_with_predicates(&pruned_trees, &preprocessed_batches).unwrap()
+        })
+    });
+
+    c.bench_function("airline_with_autopruning", |b| {
+        b.to_async(&rt).iter(|| async {
+            run_prediction_with_autoprune(
+                &trees,
+                &preprocessed_batches,
+                &Arc::new(vec![
+                    "online_boarding".to_string(),
+                    "type_of_travel".to_string(),
+                ]),
+            )
+            .unwrap()
         })
     });
 

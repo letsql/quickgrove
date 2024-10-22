@@ -1,4 +1,5 @@
 use arrow::array::{Array, Float64Array, Float64Builder, Int64Array};
+use arrow::compute::{max, min};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use colored::Colorize;
@@ -341,6 +342,42 @@ impl Default for Predicate {
     }
 }
 
+pub struct AutoPredicate {
+    feature_names: Arc<Vec<String>>,
+}
+
+impl AutoPredicate {
+    pub fn new(feature_names: Arc<Vec<String>>) -> Self {
+        AutoPredicate { feature_names }
+    }
+
+    pub fn generate_predicate(&self, batch: &RecordBatch) -> Result<Predicate, ArrowError> {
+        let mut predicate = Predicate::new();
+
+        for feature_name in self.feature_names.iter() {
+            if let Some(column) = batch.column_by_name(feature_name) {
+                if let Some(float_array) = column.as_any().downcast_ref::<Float64Array>() {
+                    let min_val = min(float_array);
+                    let max_val = max(float_array);
+
+                    if let (Some(min_val), Some(max_val)) = (min_val, max_val) {
+                        predicate.add_condition(
+                            feature_name.clone(),
+                            Condition::GreaterThanOrEqual(min_val),
+                        );
+                        predicate.add_condition(
+                            feature_name.clone(),
+                            Condition::LessThan(max_val + f64::EPSILON),
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(predicate)
+    }
+}
+
 impl Tree {
     pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<String>>) -> Self {
         Tree {
@@ -479,11 +516,11 @@ impl Tree {
         let mut new_nodes = Vec::new();
         let mut index_map = HashMap::new();
         let mut tree_changed = false;
-    
+
         for (old_index, node) in self.nodes.iter().enumerate() {
             let mut new_node = node.clone();
             let mut should_prune = false;
-    
+
             if node.split_index != LEAF_NODE {
                 let feature_index = self.feature_offset + node.split_index as usize;
                 if let Some(feature_name) = feature_names.get(feature_index) {
@@ -509,7 +546,7 @@ impl Tree {
                     }
                 }
             }
-    
+
             if should_prune {
                 if new_node.left_child == u32::MAX {
                     new_node = self.nodes[new_node.right_child as usize].clone();
@@ -517,12 +554,12 @@ impl Tree {
                     new_node = self.nodes[new_node.left_child as usize].clone();
                 }
             }
-    
+
             let new_index = new_nodes.len() as u32;
             index_map.insert(old_index as u32, new_index);
             new_nodes.push(new_node);
         }
-    
+
         // Update child indices
         for node in &mut new_nodes {
             if node.split_index != LEAF_NODE {
@@ -530,7 +567,7 @@ impl Tree {
                 node.right_child = *index_map.get(&node.right_child).unwrap_or(&u32::MAX);
             }
         }
-    
+
         if new_nodes.is_empty() {
             None
         } else if tree_changed {
@@ -741,6 +778,16 @@ impl Trees {
         }
     }
 
+    pub fn auto_prune(
+        &self,
+        batch: &RecordBatch,
+        feature_names: &Arc<Vec<String>>,
+    ) -> Result<Self, ArrowError> {
+        let auto_predicate = AutoPredicate::new(Arc::clone(feature_names));
+        let predicate = auto_predicate.generate_predicate(batch)?;
+        Ok(self.prune(&predicate))
+    }
+
     pub fn print_tree_info(&self) {
         println!("Total number of trees: {}", self.num_trees());
 
@@ -809,15 +856,15 @@ mod tests {
         }
     }
     fn create_tree_nested_features() -> Tree {
-    //              feature0 < 1.0
-    //             /             \
-    //    feature0 < 0.5         Leaf (2.0)
-    //   /           \
-    // Leaf (-1.0)  Leaf (1.0)
+        //              feature0 < 1.0
+        //             /             \
+        //    feature0 < 0.5         Leaf (2.0)
+        //   /           \
+        // Leaf (-1.0)  Leaf (1.0)
         Tree {
             nodes: vec![
                 Node {
-                    split_index: 0,  // feature0
+                    split_index: 0, // feature0
                     split_condition: 1.0,
                     left_child: 1,
                     right_child: 2,
@@ -825,7 +872,7 @@ mod tests {
                     split_type: SplitType::Numerical,
                 },
                 Node {
-                    split_index: 0,  // feature0 (nested)
+                    split_index: 0, // feature0 (nested)
                     split_condition: 0.5,
                     left_child: 3,
                     right_child: 4,
@@ -858,14 +905,8 @@ mod tests {
                 },
             ],
             feature_offset: 0,
-            feature_names: Arc::new(vec![
-                "feature0".to_string(),
-                "feature1".to_string(),
-            ]),
-            feature_types: Arc::new(vec![
-                "float".to_string(),
-                "float".to_string(),
-            ]),
+            feature_names: Arc::new(vec!["feature0".to_string(), "feature1".to_string()]),
+            feature_types: Arc::new(vec!["float".to_string(), "float".to_string()]),
         }
     }
     fn create_sample_tree_deep() -> Tree {
@@ -1162,7 +1203,12 @@ mod tests {
         let tree = create_tree_nested_features();
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
-        let pruned_tree = tree.prune(&predicate, &["feature0".to_string(), "feature1".to_string()]).unwrap();
+        let pruned_tree = tree
+            .prune(
+                &predicate,
+                &["feature0".to_string(), "feature1".to_string()],
+            )
+            .unwrap();
         assert_eq!(pruned_tree.predict(&[0.4, 0.0]), -1.0);
     }
 }
