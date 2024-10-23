@@ -560,30 +560,60 @@ impl Tree {
             new_nodes.push(new_node);
         }
 
-        // Update child indices
         for node in &mut new_nodes {
             if node.split_index != LEAF_NODE {
                 node.left_child = *index_map.get(&node.left_child).unwrap_or(&u32::MAX);
                 node.right_child = *index_map.get(&node.right_child).unwrap_or(&u32::MAX);
             }
         }
-
         if new_nodes.is_empty() {
             None
         } else if tree_changed {
-            // Recursively prune if the tree still contains predicate nodes
-            let new_tree = Tree {
+            let mut new_tree = Tree {
                 nodes: new_nodes,
                 feature_offset: self.feature_offset,
                 feature_names: self.feature_names.clone(),
                 feature_types: self.feature_types.clone(),
             };
+            new_tree.repack();  // Repack the nodes after pruning
             new_tree.prune(predicate, feature_names)
         } else {
             Some(self.clone())
         }
     }
 
+    pub fn repack(&mut self) {
+        let mut new_nodes = Vec::new();
+        let mut index_map = HashMap::new();
+
+        // Perform DFS to identify and repack reachable nodes
+        self.repack_dfs(0, &mut new_nodes, &mut index_map);
+
+        // Update child indices in the new nodes
+        for node in &mut new_nodes {
+            if node.split_index != LEAF_NODE {
+                node.left_child = *index_map.get(&node.left_child).unwrap();
+                node.right_child = *index_map.get(&node.right_child).unwrap();
+            }
+        }
+
+        // Replace the old nodes with the repacked nodes
+        self.nodes = new_nodes;
+    }
+
+    fn repack_dfs(&self, node_index: usize, new_nodes: &mut Vec<Node>, index_map: &mut HashMap<u32, u32>) {
+        let old_index = node_index as u32;
+        let new_index = new_nodes.len() as u32;
+        index_map.insert(old_index, new_index);
+
+        let node = self.nodes[node_index].clone();
+        new_nodes.push(node.clone());
+
+        if node.split_index != LEAF_NODE {
+            self.repack_dfs(node.left_child as usize, new_nodes, index_map);
+            self.repack_dfs(node.right_child as usize, new_nodes, index_map);
+        }
+    }
     pub fn diff<'a>(&'a self, other: &'a Tree) -> TreeDiff<'a> {
         TreeDiff {
             old_tree: self,
