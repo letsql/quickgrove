@@ -513,14 +513,14 @@ impl Tree {
     }
 
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
-        let mut new_nodes = Vec::new();
-        let mut index_map = HashMap::new();
+        let mut new_nodes = Vec::with_capacity(self.nodes.len());
+        let mut index_map = vec![u32::MAX; self.nodes.len()];
         let mut tree_changed = false;
-
+    
         for (old_index, node) in self.nodes.iter().enumerate() {
             let mut new_node = node.clone();
             let mut should_prune = false;
-
+    
             if node.split_index != LEAF_NODE {
                 let feature_index = self.feature_offset + node.split_index as usize;
                 if let Some(feature_name) = feature_names.get(feature_index) {
@@ -528,14 +528,14 @@ impl Tree {
                         for condition in conditions {
                             match condition {
                                 Condition::LessThan(value) => {
-                                    if *value < node.split_condition {
+                                    if *value <= node.split_condition {
                                         new_node.right_child = u32::MAX;
                                         tree_changed = true;
                                         should_prune = true;
                                     }
                                 }
                                 Condition::GreaterThanOrEqual(value) => {
-                                    if *value >= node.split_condition {
+                                    if *value > node.split_condition {
                                         new_node.left_child = u32::MAX;
                                         tree_changed = true;
                                         should_prune = true;
@@ -546,7 +546,7 @@ impl Tree {
                     }
                 }
             }
-
+    
             if should_prune {
                 if new_node.left_child == u32::MAX {
                     new_node = self.nodes[new_node.right_child as usize].clone();
@@ -554,66 +554,77 @@ impl Tree {
                     new_node = self.nodes[new_node.left_child as usize].clone();
                 }
             }
-
+    
             let new_index = new_nodes.len() as u32;
-            index_map.insert(old_index as u32, new_index);
+            index_map[old_index] = new_index;
             new_nodes.push(new_node);
         }
-
+    
+        if !tree_changed {
+            return Some(self.clone());
+        }
+    
         for node in &mut new_nodes {
             if node.split_index != LEAF_NODE {
-                node.left_child = *index_map.get(&node.left_child).unwrap_or(&u32::MAX);
-                node.right_child = *index_map.get(&node.right_child).unwrap_or(&u32::MAX);
+                if node.left_child != u32::MAX {
+                    node.left_child = index_map[node.left_child as usize];
+                }
+                if node.right_child != u32::MAX {
+                    node.right_child = index_map[node.right_child as usize];
+                }
             }
         }
-        if new_nodes.is_empty() {
+    
+        let mut reachable = vec![false; new_nodes.len()];
+        let mut stack = vec![0]; // Start from the root
+        while let Some(index) = stack.pop() {
+            if !reachable[index as usize] {
+                reachable[index as usize] = true;
+                let node = &new_nodes[index as usize];
+                if node.split_index != LEAF_NODE {
+                    if node.left_child != u32::MAX {
+                        stack.push(node.left_child);
+                    }
+                    if node.right_child != u32::MAX {
+                        stack.push(node.right_child);
+                    }
+                }
+            }
+        }
+    
+        let mut final_nodes = Vec::new();
+        let mut final_index_map = vec![u32::MAX; new_nodes.len()];
+    
+        for (i, node) in new_nodes.into_iter().enumerate() {
+            if reachable[i] {
+                final_index_map[i] = final_nodes.len() as u32;
+                final_nodes.push(node);
+            }
+        }
+    
+        for node in &mut final_nodes {
+            if node.split_index != LEAF_NODE {
+                if node.left_child != u32::MAX {
+                    node.left_child = final_index_map[node.left_child as usize];
+                }
+                if node.right_child != u32::MAX {
+                    node.right_child = final_index_map[node.right_child as usize];
+                }
+            }
+        }
+    
+        if final_nodes.is_empty() {
             None
-        } else if tree_changed {
-            let mut new_tree = Tree {
-                nodes: new_nodes,
+        } else {
+            Some(Tree {
+                nodes: final_nodes,
                 feature_offset: self.feature_offset,
                 feature_names: self.feature_names.clone(),
                 feature_types: self.feature_types.clone(),
-            };
-            new_tree.repack();  // Repack the nodes after pruning
-            new_tree.prune(predicate, feature_names)
-        } else {
-            Some(self.clone())
+            })
         }
     }
 
-    pub fn repack(&mut self) {
-        let mut new_nodes = Vec::new();
-        let mut index_map = HashMap::new();
-
-        // Perform DFS to identify and repack reachable nodes
-        self.repack_dfs(0, &mut new_nodes, &mut index_map);
-
-        // Update child indices in the new nodes
-        for node in &mut new_nodes {
-            if node.split_index != LEAF_NODE {
-                node.left_child = *index_map.get(&node.left_child).unwrap();
-                node.right_child = *index_map.get(&node.right_child).unwrap();
-            }
-        }
-
-        // Replace the old nodes with the repacked nodes
-        self.nodes = new_nodes;
-    }
-
-    fn repack_dfs(&self, node_index: usize, new_nodes: &mut Vec<Node>, index_map: &mut HashMap<u32, u32>) {
-        let old_index = node_index as u32;
-        let new_index = new_nodes.len() as u32;
-        index_map.insert(old_index, new_index);
-
-        let node = self.nodes[node_index].clone();
-        new_nodes.push(node.clone());
-
-        if node.split_index != LEAF_NODE {
-            self.repack_dfs(node.left_child as usize, new_nodes, index_map);
-            self.repack_dfs(node.right_child as usize, new_nodes, index_map);
-        }
-    }
     pub fn diff<'a>(&'a self, other: &'a Tree) -> TreeDiff<'a> {
         TreeDiff {
             old_tree: self,
