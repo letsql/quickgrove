@@ -331,9 +331,9 @@ fn bench_trusty(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
             .sum::<usize>()
     );
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(2.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(10.0));
-    predicate.add_condition("carat".to_string(), Condition::LessThan(4.0));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThan(2.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThanOrEqual(10.0));
+    predicate.add_condition("carat".to_string(), Condition::LessThanOrEqual(4.0));
 
     let pruned_trees = trees.prune(&predicate);
 
@@ -452,10 +452,10 @@ fn bench_airline(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let mut predicate = Predicate::new();
     predicate.add_condition(
         "online_boarding".to_string(),
-        Condition::GreaterThanOrEqual(4.0),
+        Condition::GreaterThan(4.0),
     );
 
-    predicate.add_condition("type_of_travel".to_string(), Condition::LessThan(1.0));
+    predicate.add_condition("type_of_travel".to_string(), Condition::LessThanOrEqual(1.0));
     let pruned_trees = trees.prune(&predicate);
 
     c.bench_function("airline_no_pruning", |b| {

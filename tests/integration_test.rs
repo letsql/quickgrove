@@ -136,8 +136,8 @@ mod tests {
         let trees = Trees::load(&model_data)?;
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(3.0));
-        predicate.add_condition("depth".to_string(), Condition::LessThan(65.0));
+        predicate.add_condition("carat".to_string(), Condition::GreaterThan(3.0));
+        predicate.add_condition("depth".to_string(), Condition::LessThanOrEqual(65.0));
 
         let pruned_trees = trees.prune(&predicate);
         let predictions: PrimitiveArray<Float64Type> = pruned_trees.predict_batch(&batch)?;
