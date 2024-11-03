@@ -14,7 +14,6 @@ colored = "2.1"
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports", "async_futures","async_tokio"] }
 tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros"] }
-gbdt = { git = "https://github.com/letsql/gbdt-rs.git", rev = "8262de1d20ab6dc7c7e6778b243578d190fb6a62" }
 approx = "0.5.1"
 rayon = "1.10.0"
 

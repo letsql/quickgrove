@@ -22,9 +22,6 @@
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        
-        debug = msg: value:
-          builtins.trace "${msg}: ${builtins.toJSON value}" value;
       
         allowedExtensions = [
           "csv"

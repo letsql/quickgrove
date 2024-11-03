@@ -431,7 +431,7 @@ impl Tree {
             .unwrap_or_default();
 
         for i in 0..left_children.len() {
-            let split_type = if ["int", "float"]
+            let split_type = if ["int", "i", "float"]
                 .contains(&tree.feature_types[split_indices[i] as usize].as_str())
             {
                 SplitType::Numerical
@@ -747,6 +747,15 @@ impl Trees {
                         Ok(Arc::new(array.clone()) as Arc<dyn Array>)
                     }
                     "int" => {
+                        let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                            ArrowError::InvalidArgumentError(format!(
+                                "Expected Int64Array for column: {}",
+                                name
+                            ))
+                        })?;
+                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
+                    }
+                    "i" => {
                         let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                             ArrowError::InvalidArgumentError(format!(
                                 "Expected Int64Array for column: {}",
