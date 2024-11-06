@@ -1,8 +1,7 @@
 import pandas as pd
 import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
-import numpy as np
-from typing import Tuple, List, Dict, Union
+from typing import Tuple, List, Dict
 import os
 
 def enforce_float64(df: pd.DataFrame) -> pd.DataFrame:

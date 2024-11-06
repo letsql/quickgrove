@@ -361,8 +361,10 @@ impl AutoPredicate {
                     let max_val = max(float_array);
 
                     if let (Some(min_val), Some(max_val)) = (min_val, max_val) {
-                        predicate
-                            .add_condition(feature_name.clone(), Condition::GreaterThanOrEqual(min_val));
+                        predicate.add_condition(
+                            feature_name.clone(),
+                            Condition::GreaterThanOrEqual(min_val),
+                        );
                         predicate.add_condition(
                             feature_name.clone(),
                             Condition::LessThan(max_val + f64::EPSILON),

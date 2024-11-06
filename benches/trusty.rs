@@ -1,3 +1,4 @@
+#![allow(unused_must_use)]
 use arrow::array::{ArrayRef, Float64Array};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -14,10 +15,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
 
-fn predict_batch(
-    trees: &Trees,
-    batches: &[RecordBatch],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
     batches.par_iter().for_each(|batch| {
         let _prediction = trees.predict_batch(batch);
     });
@@ -127,35 +125,35 @@ mod data_loader {
             Field::new("target", DataType::Float64, false),
             Field::new("prediction", DataType::Float64, false),
         ]));
-    
+
         let csv = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(batch_size)
             .build(file)?;
-    
+
         let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
-    
+
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
-    
+
         let mut feature_batches = Vec::new();
         let mut target_prediction_batches = Vec::new();
-    
+
         for batch in batches {
             let feature_columns: Vec<ArrayRef> = batch.columns()[0..23].to_vec();
             let target_prediction_columns: Vec<ArrayRef> = batch.columns()[23..].to_vec();
-    
+
             let feature_batch = RecordBatch::try_new(feature_schema.clone(), feature_columns)?;
             let target_prediction_batch =
                 RecordBatch::try_new(target_prediction_schema.clone(), target_prediction_columns)?;
-    
+
             feature_batches.push(feature_batch);
             target_prediction_batches.push(target_prediction_batch);
         }
-    
+
         Ok((feature_batches, target_prediction_batches))
     }
-    
+
     pub fn read_diamonds_csv_floats(
         path: &str,
         batch_size: usize,
@@ -188,35 +186,35 @@ mod data_loader {
             Field::new("target", DataType::Float64, false),
             Field::new("prediction", DataType::Float64, false),
         ]));
-    
+
         let csv = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(batch_size)
             .build(file)?;
-    
+
         let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
-    
+
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
-    
+
         let mut feature_batches = Vec::new();
         let mut target_prediction_batches = Vec::new();
-    
+
         for batch in batches {
             let feature_columns: Vec<ArrayRef> = batch.columns()[0..23].to_vec();
             let target_prediction_columns: Vec<ArrayRef> = batch.columns()[23..].to_vec();
-    
+
             let feature_batch = RecordBatch::try_new(feature_schema.clone(), feature_columns)?;
             let target_prediction_batch =
                 RecordBatch::try_new(target_prediction_schema.clone(), target_prediction_columns)?;
-    
+
             feature_batches.push(feature_batch);
             target_prediction_batches.push(target_prediction_batch);
         }
-    
+
         Ok((feature_batches, target_prediction_batches))
     }
-    
+
     pub fn read_airline_csv(
         path: &str,
         batch_size: usize,
@@ -248,35 +246,35 @@ mod data_loader {
             Field::new("target", DataType::Float64, false),
             Field::new("prediction", DataType::Float64, false),
         ]));
-    
+
         let csv = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(batch_size)
             .build(file)?;
-    
+
         let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
-    
+
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
-    
+
         let mut feature_batches = Vec::new();
         let mut target_prediction_batches = Vec::new();
-    
+
         for batch in batches {
             let feature_columns: Vec<ArrayRef> = batch.columns()[0..23].to_vec();
             let target_prediction_columns: Vec<ArrayRef> = batch.columns()[23..].to_vec();
-    
+
             let feature_batch = RecordBatch::try_new(feature_schema.clone(), feature_columns)?;
             let target_prediction_batch =
                 RecordBatch::try_new(target_prediction_schema.clone(), target_prediction_columns)?;
-    
+
             feature_batches.push(feature_batch);
             target_prediction_batches.push(target_prediction_batch);
         }
-    
+
         Ok((feature_batches, target_prediction_batches))
     }
-    
+
     pub fn read_airline_csv_floats(
         path: &str,
         batch_size: usize,
@@ -290,7 +288,11 @@ mod data_loader {
             Field::new("class", DataType::Float64, false),
             Field::new("flight_distance", DataType::Float64, false),
             Field::new("inflight_wifi_service", DataType::Float64, false),
-            Field::new("departure/arrival_time_convenient", DataType::Float64, false),
+            Field::new(
+                "departure/arrival_time_convenient",
+                DataType::Float64,
+                false,
+            ),
             Field::new("ease_of_online_booking", DataType::Float64, false),
             Field::new("gate_location", DataType::Float64, false),
             Field::new("food_and_drink", DataType::Float64, false),
@@ -308,42 +310,41 @@ mod data_loader {
             Field::new("target", DataType::Float64, false),
             Field::new("prediction", DataType::Float64, false),
         ]));
-    
+
         let csv = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(batch_size)
             .build(file)?;
-    
+
         let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
-    
+
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
-    
+
         let mut feature_batches = Vec::new();
         let mut target_prediction_batches = Vec::new();
-    
+
         for batch in batches {
             let feature_columns: Vec<ArrayRef> = batch.columns()[0..23].to_vec();
             let target_prediction_columns: Vec<ArrayRef> = batch.columns()[23..].to_vec();
-    
+
             let feature_batch = RecordBatch::try_new(feature_schema.clone(), feature_columns)?;
             let target_prediction_batch =
                 RecordBatch::try_new(target_prediction_schema.clone(), target_prediction_columns)?;
-    
+
             feature_batches.push(feature_batch);
             target_prediction_batches.push(target_prediction_batch);
         }
-    
+
         Ok((feature_batches, target_prediction_batches))
     }
-
 }
 
-// Benchmark functions
 fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
     let trees = load_model("tests/models/diamonds_model.json")?;
-    let (data_batches, _) = data_loader::load_diamonds_dataset("tests/data/diamonds_filtered.csv", 8192 / 16, false)?;
+    let (data_batches, _) =
+        data_loader::load_diamonds_dataset("tests/data/diamonds_filtered.csv", 8192 / 16, false)?;
 
     let predicate = {
         let mut pred = Predicate::new();
@@ -352,19 +353,16 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
     };
     let pruned_trees = trees.prune(&predicate);
 
-    // Standard prediction benchmark
     c.bench_function("diamonds_baseline_prediction", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&trees, &data_batches).unwrap() })
     });
 
-    // Prediction with manual pruning
     c.bench_function("diamonds_manual_pruning_prediction", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
     });
 
-    // Prediction with auto-pruning
     c.bench_function("diamonds_auto_pruning_prediction", |b| {
         b.to_async(&rt).iter(|| async {
             predict_batch_with_autoprune(
@@ -381,11 +379,15 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
 fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
     let trees = load_model("tests/models/airline_model.json")?;
-    let (data_batches, _) = data_loader::load_airline_dataset("tests/data/airline_filtered.csv", 8192 / 8, false)?;
+    let (data_batches, _) =
+        data_loader::load_airline_dataset("tests/data/airline_filtered.csv", 8192 / 8, false)?;
 
     let predicate = {
         let mut pred = Predicate::new();
-        pred.add_condition("online_boarding".to_string(), Condition::GreaterThanOrEqual(4.0));
+        pred.add_condition(
+            "online_boarding".to_string(),
+            Condition::GreaterThanOrEqual(4.0),
+        );
         pred
     };
     let pruned_trees = trees.prune(&predicate);
@@ -415,38 +417,45 @@ fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>>
     });
     Ok(())
 }
+
 fn benchmark_gbdt(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     {
-        let airline_model = GBDT::from_xgboost_json_used_feature("tests/models/airline_model_float64.json")
-            .expect("Failed to load airline model");
+        let airline_model =
+            GBDT::from_xgboost_json_used_feature("tests/models/airline_model_float64.json")
+                .expect("Failed to load airline model");
 
         let (airline_batches, _) = data_loader::load_airline_dataset(
             "tests/data/airline_filtered_float64.csv",
             8192 / 16,
             true,
-        ).expect("Failed to load airline data");
+        )
+        .expect("Failed to load airline data");
 
         c.bench_function("gbdt/airline", |b| {
-            b.to_async(&rt)
-                .iter(|| async { predict_batch_with_gbdt(&airline_model, &airline_batches).unwrap() })
+            b.to_async(&rt).iter(|| async {
+                predict_batch_with_gbdt(&airline_model, &airline_batches).unwrap()
+            })
         });
     }
 
     {
-        let diamonds_model = GBDT::from_xgboost_json_used_feature("tests/models/diamonds_model_float64.json")
-            .expect("Failed to load diamonds model");
+        let diamonds_model =
+            GBDT::from_xgboost_json_used_feature("tests/models/diamonds_model_float64.json")
+                .expect("Failed to load diamonds model");
 
         let (diamonds_batches, _) = data_loader::load_diamonds_dataset(
             "tests/data/diamonds_filtered_float64.csv",
             8192 / 16,
             true,
-        ).expect("Failed to load diamonds data");
+        )
+        .expect("Failed to load diamonds data");
 
         c.bench_function("gbdt/diamonds", |b| {
-            b.to_async(&rt)
-                .iter(|| async { predict_batch_with_gbdt(&diamonds_model, &diamonds_batches).unwrap() })
+            b.to_async(&rt).iter(|| async {
+                predict_batch_with_gbdt(&diamonds_model, &diamonds_batches).unwrap()
+            })
         });
     }
 }
@@ -461,7 +470,7 @@ fn load_model(path: &str) -> Result<Trees, Box<dyn Error>> {
 criterion_group! {
     name = trusty;
     config = Criterion::default();
-    targets = 
+    targets =
         benchmark_diamonds_prediction,
         benchmark_airline_prediction,
         benchmark_gbdt

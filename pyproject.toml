@@ -16,3 +16,7 @@ scikit-learn = "^1.5.2"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 88
+fix = true
