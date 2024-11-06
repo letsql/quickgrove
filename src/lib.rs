@@ -1,4 +1,4 @@
-use arrow::array::{Array, Float64Array, Float64Builder, Int64Array};
+use arrow::array::{Array, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::compute::{max, min};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
@@ -312,8 +312,8 @@ impl<'a> fmt::Display for TreeDiff<'a> {
 
 #[derive(Debug, Clone)]
 pub enum Condition {
-    LessThanOrEqual(f64),
-    GreaterThan(f64),
+    LessThan(f64),
+    GreaterThanOrEqual(f64),
 }
 
 #[derive(Debug, Clone)]
@@ -362,10 +362,10 @@ impl AutoPredicate {
 
                     if let (Some(min_val), Some(max_val)) = (min_val, max_val) {
                         predicate
-                            .add_condition(feature_name.clone(), Condition::GreaterThan(min_val));
+                            .add_condition(feature_name.clone(), Condition::GreaterThanOrEqual(min_val));
                         predicate.add_condition(
                             feature_name.clone(),
-                            Condition::LessThanOrEqual(max_val + f64::EPSILON),
+                            Condition::LessThan(max_val + f64::EPSILON),
                         );
                     }
                 }
@@ -525,15 +525,15 @@ impl Tree {
                     if let Some(conditions) = predicate.conditions.get(feature_name) {
                         for condition in conditions {
                             match condition {
-                                Condition::LessThanOrEqual(value) => {
-                                    if *value <= node.split_condition {
+                                Condition::LessThan(value) => {
+                                    if *value < node.split_condition {
                                         new_node.right_child = u32::MAX;
                                         tree_changed = true;
                                         should_prune = true;
                                     }
                                 }
-                                Condition::GreaterThan(value) => {
-                                    if *value > node.split_condition {
+                                Condition::GreaterThanOrEqual(value) => {
+                                    if *value >= node.split_condition {
                                         new_node.left_child = u32::MAX;
                                         tree_changed = true;
                                         should_prune = true;
@@ -756,12 +756,13 @@ impl Trees {
                         Ok(Arc::new(array.clone()) as Arc<dyn Array>)
                     }
                     "i" => {
-                        let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                            ArrowError::InvalidArgumentError(format!(
-                                "Expected Int64Array for column: {}",
-                                name
-                            ))
-                        })?;
+                        let array =
+                            col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
+                                ArrowError::InvalidArgumentError(format!(
+                                    "Expected BooleanArray for column: {}",
+                                    name
+                                ))
+                            })?;
                         Ok(Arc::new(array.clone()) as Arc<dyn Array>)
                     }
                     _ => Err(ArrowError::InvalidArgumentError(format!(
@@ -787,6 +788,13 @@ impl Trees {
                         .downcast_ref::<Int64Array>()
                         .unwrap()
                         .value(row) as f64
+                } else if col.as_any().is::<BooleanArray>() {
+                    let bool_array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    if bool_array.value(row) {
+                        1.0
+                    } else {
+                        0.0
+                    }
                 } else {
                     return Err(ArrowError::InvalidArgumentError(
                         "Unsupported array type".to_string(),
@@ -1048,7 +1056,7 @@ mod tests {
     fn test_tree_prune() {
         let tree = create_sample_tree();
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThanOrEqual(0.50));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
         let pruned_tree = tree.prune(&predicate, &["feature0".to_string()]).unwrap();
         assert_eq!(pruned_tree.nodes.len(), 1);
         assert_eq!(pruned_tree.nodes[0].left_child, 0);
@@ -1066,7 +1074,7 @@ mod tests {
 
         // Test case 1: Prune right subtree of root
         let mut predicate1 = Predicate::new();
-        predicate1.add_condition("feature1".to_string(), Condition::LessThanOrEqual(0.30));
+        predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.29));
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
         assert_eq!(pruned_tree1.num_nodes(), tree.num_nodes() - 1);
         assert_eq!(pruned_tree1.nodes[1].left_child, 0);
@@ -1076,7 +1084,7 @@ mod tests {
 
         // Test case 2: Prune left subtree of left child of root
         let mut predicate2 = Predicate::new();
-        predicate2.add_condition("feature2".to_string(), Condition::LessThanOrEqual(0.70)); // :)
+        predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.69)); // :)
         let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
 
         assert_eq!(pruned_tree2.num_nodes(), tree.num_nodes() - 1);
@@ -1088,12 +1096,12 @@ mod tests {
 
         // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
-        predicate3.add_condition("feature0".to_string(), Condition::GreaterThan(0.50));
+        predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
         println!("Tree: {:?}", pruned_tree3);
-        assert_eq!(pruned_tree3.num_nodes(), 3);
-        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), -1.0);
-        assert_eq!(pruned_tree3.depth(), 3);
+        assert_eq!(pruned_tree3.num_nodes(), 1);
+        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 2.0);
+        assert_eq!(pruned_tree3.depth(), 2);
     }
 
     #[test]
@@ -1106,19 +1114,19 @@ mod tests {
         ];
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::GreaterThan(0.5));
-        predicate.add_condition("feature1".to_string(), Condition::LessThanOrEqual(0.5));
+        predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
+        predicate.add_condition("feature1".to_string(), Condition::LessThan(0.4));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
 
-        assert_eq!(pruned_tree.num_nodes(), 3);
+        assert_eq!(pruned_tree.num_nodes(), 1);
 
-        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), -2.0);
-        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), -2.0);
+        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 1.0);
+        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThanOrEqual(0.4));
-        predicate.add_condition("feature2".to_string(), Condition::GreaterThan(0.7));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
+        predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
         println!("{:}", pruned_tree);
@@ -1238,7 +1246,7 @@ mod tests {
         };
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThanOrEqual(0.5));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
 
         let pruned_trees = trees.prune(&predicate);
         assert_eq!(pruned_trees.trees.len(), 2);
@@ -1250,7 +1258,7 @@ mod tests {
     fn test_trees_nested_features() {
         let tree = create_tree_nested_features();
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThanOrEqual(0.4));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
         let pruned_tree = tree
             .prune(
                 &predicate,

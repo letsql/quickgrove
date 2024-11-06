@@ -1,4 +1,4 @@
-use arrow::array::{Float64Array, PrimitiveArray};
+use arrow::array::{BooleanArray, Float64Array, PrimitiveArray};
 use arrow::datatypes::{DataType, Field, Float64Type, Schema};
 use arrow::record_batch::RecordBatch;
 use serde_json::Value;
@@ -8,7 +8,7 @@ use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
 
-const MODEL_PATH: &str = "tests/models/pricing-model-100-mod.json";
+const MODEL_PATH: &str = "tests/models/diamonds_model.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Running tree predictions example");
@@ -20,8 +20,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Regular tree prediction successful");
 
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThan(3.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThanOrEqual(65.0));
+    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(3.0));
+    predicate.add_condition("depth".to_string(), Condition::LessThan(65.0));
 
     let pruned_trees = trees.prune(&predicate);
     let pruned_predictions: PrimitiveArray<Float64Type> = pruned_trees.predict_batch(&batch)?;
@@ -62,23 +62,23 @@ fn create_record_batch() -> Result<RecordBatch, Box<dyn Error>> {
         Field::new("x", DataType::Float64, false),
         Field::new("y", DataType::Float64, false),
         Field::new("z", DataType::Float64, false),
-        Field::new("cut_good", DataType::Float64, false),
-        Field::new("cut_ideal", DataType::Float64, false),
-        Field::new("cut_premium", DataType::Float64, false),
-        Field::new("cut_very_good", DataType::Float64, false),
-        Field::new("color_e", DataType::Float64, false),
-        Field::new("color_f", DataType::Float64, false),
-        Field::new("color_g", DataType::Float64, false),
-        Field::new("color_h", DataType::Float64, false),
-        Field::new("color_i", DataType::Float64, false),
-        Field::new("color_j", DataType::Float64, false),
-        Field::new("clarity_if", DataType::Float64, false),
-        Field::new("clarity_si1", DataType::Float64, false),
-        Field::new("clarity_si2", DataType::Float64, false),
-        Field::new("clarity_vs1", DataType::Float64, false),
-        Field::new("clarity_vs2", DataType::Float64, false),
-        Field::new("clarity_vvs1", DataType::Float64, false),
-        Field::new("clarity_vvs2", DataType::Float64, false),
+        Field::new("cut_good", DataType::Boolean, false),
+        Field::new("cut_ideal", DataType::Boolean, false),
+        Field::new("cut_premium", DataType::Boolean, false),
+        Field::new("cut_very_good", DataType::Boolean, false),
+        Field::new("color_e", DataType::Boolean, false),
+        Field::new("color_f", DataType::Boolean, false),
+        Field::new("color_g", DataType::Boolean, false),
+        Field::new("color_h", DataType::Boolean, false),
+        Field::new("color_i", DataType::Boolean, false),
+        Field::new("color_j", DataType::Boolean, false),
+        Field::new("clarity_if", DataType::Boolean, false),
+        Field::new("clarity_si1", DataType::Boolean, false),
+        Field::new("clarity_si2", DataType::Boolean, false),
+        Field::new("clarity_vs1", DataType::Boolean, false),
+        Field::new("clarity_vs2", DataType::Boolean, false),
+        Field::new("clarity_vvs1", DataType::Boolean, false),
+        Field::new("clarity_vvs2", DataType::Boolean, false),
     ]));
 
     let batch = RecordBatch::try_new(
@@ -90,23 +90,23 @@ fn create_record_batch() -> Result<RecordBatch, Box<dyn Error>> {
             Arc::new(Float64Array::from(vec![3.95])),
             Arc::new(Float64Array::from(vec![3.98])),
             Arc::new(Float64Array::from(vec![2.43])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![1.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![1.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![1.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
-            Arc::new(Float64Array::from(vec![0.0])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![true])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![true])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![true])),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(BooleanArray::from(vec![false])),
         ],
     )?;
 
