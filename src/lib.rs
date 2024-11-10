@@ -465,20 +465,24 @@ impl Tree {
         Ok(tree)
     }
 
+    #[inline(always)]
     pub fn predict(&self, features: &[f64]) -> f64 {
-        let mut node_index = 0;
-        loop {
-            let node = &self.nodes[node_index];
-            if node.split_index == LEAF_NODE {
-                return node.weight;
-            }
-            let feature_value = features[self.feature_offset + node.split_index as usize];
-            node_index = if feature_value < node.split_condition {
-                node.left_child as usize
-            } else {
-                node.right_child as usize
+        let mut node = &self.nodes[0];
+
+        while node.split_index != LEAF_NODE {
+            let feature_value = unsafe {
+                // SAFETY: feature_offset and split_index are validated during tree construction
+                *features.get_unchecked(self.feature_offset + node.split_index as usize)
             };
+
+            node = &self.nodes[if feature_value < node.split_condition {
+                node.left_child
+            } else {
+                node.right_child
+            } as usize];
         }
+
+        node.weight
     }
 
     fn depth(&self) -> usize {
