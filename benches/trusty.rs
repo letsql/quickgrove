@@ -344,7 +344,7 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
     let rt = Runtime::new()?;
     let trees = load_model("tests/models/diamonds_model.json")?;
     let (data_batches, _) =
-        data_loader::load_diamonds_dataset("tests/data/diamonds_filtered.csv", 8192 / 16, false)?;
+        data_loader::load_diamonds_dataset("tests/data/diamonds_filtered.csv", 8192 / 48, false)?;
 
     let predicate = {
         let mut pred = Predicate::new();
@@ -353,17 +353,17 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
     };
     let pruned_trees = trees.prune(&predicate);
 
-    c.bench_function("diamonds_baseline_prediction", |b| {
+    c.bench_function("trusty/diamonds/baseline", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&trees, &data_batches).unwrap() })
     });
 
-    c.bench_function("diamonds_manual_pruning_prediction", |b| {
+    c.bench_function("trusty/diamonds/manual_pruning", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
     });
 
-    c.bench_function("diamonds_auto_pruning_prediction", |b| {
+    c.bench_function("trust/diamonds/auto_pruning", |b| {
         b.to_async(&rt).iter(|| async {
             predict_batch_with_autoprune(
                 &trees,
@@ -378,10 +378,12 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
 
 fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
     let rt = Runtime::new()?;
-    let trees = load_model("tests/models/airline_model.json")?;
-    let (data_batches, _) =
-        data_loader::load_airline_dataset("tests/data/airline_filtered.csv", 8192 / 8, false)?;
-
+    let trees = load_model("tests/models/airline_model_float64.json")?;
+    let (data_batches, _) = data_loader::load_airline_dataset(
+        "tests/data/airline_filtered_float64.csv",
+        8192 / 48,
+        true,
+    )?;
     let predicate = {
         let mut pred = Predicate::new();
         pred.add_condition(
@@ -392,20 +394,19 @@ fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>>
     };
     let pruned_trees = trees.prune(&predicate);
 
-    // Standard prediction benchmark
-    c.bench_function("airline_baseline_prediction", |b| {
+    let mut group = c.benchmark_group("trusty/airline");
+
+    group.bench_function("baseline", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&trees, &data_batches).unwrap() })
     });
 
-    // Prediction with manual pruning
-    c.bench_function("airline_manual_pruning_prediction", |b| {
+    group.bench_function("manual_pruning", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
     });
 
-    // Prediction with auto-pruning
-    c.bench_function("airline_auto_pruning_prediction", |b| {
+    group.bench_function("auto_pruning", |b| {
         b.to_async(&rt).iter(|| async {
             predict_batch_with_autoprune(
                 &trees,
@@ -415,47 +416,60 @@ fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>>
             .unwrap()
         })
     });
+
+    group.finish();
     Ok(())
 }
 
-fn benchmark_gbdt(c: &mut Criterion) {
+fn benchmark_implementations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
     {
-        let airline_model =
-            GBDT::from_xgboost_json_used_feature("tests/models/airline_model_float64.json")
-                .expect("Failed to load airline model");
+        let trees = load_model("tests/models/diamonds_model_float64.json")
+            .expect("Failed to load diamonds model");
+        let (batches, _) = data_loader::load_diamonds_dataset(
+            "tests/data/diamonds_filtered_float64.csv",
+            8192 / 48,
+            true,
+        )
+        .expect("Failed to load diamonds data");
 
-        let (airline_batches, _) = data_loader::load_airline_dataset(
+        c.bench_function("trusty/diamonds", |b| {
+            b.to_async(&rt)
+                .iter(|| async { predict_batch(&trees, &batches).unwrap() })
+        });
+    }
+
+    {
+        let model = GBDT::from_xgboost_json_used_feature("tests/models/airline_model_float64.json")
+            .expect("Failed to load airline model");
+        let (batches, _) = data_loader::load_airline_dataset(
             "tests/data/airline_filtered_float64.csv",
-            8192 / 16,
+            8192 / 48,
             true,
         )
         .expect("Failed to load airline data");
 
         c.bench_function("gbdt/airline", |b| {
-            b.to_async(&rt).iter(|| async {
-                predict_batch_with_gbdt(&airline_model, &airline_batches).unwrap()
-            })
+            b.to_async(&rt)
+                .iter(|| async { predict_batch_with_gbdt(&model, &batches).unwrap() })
         });
     }
 
     {
-        let diamonds_model =
+        let model =
             GBDT::from_xgboost_json_used_feature("tests/models/diamonds_model_float64.json")
                 .expect("Failed to load diamonds model");
-
-        let (diamonds_batches, _) = data_loader::load_diamonds_dataset(
+        let (batches, _) = data_loader::load_diamonds_dataset(
             "tests/data/diamonds_filtered_float64.csv",
-            8192 / 16,
+            8192 / 48,
             true,
         )
         .expect("Failed to load diamonds data");
 
         c.bench_function("gbdt/diamonds", |b| {
-            b.to_async(&rt).iter(|| async {
-                predict_batch_with_gbdt(&diamonds_model, &diamonds_batches).unwrap()
-            })
+            b.to_async(&rt)
+                .iter(|| async { predict_batch_with_gbdt(&model, &batches).unwrap() })
         });
     }
 }
@@ -473,7 +487,7 @@ criterion_group! {
     targets =
         benchmark_diamonds_prediction,
         benchmark_airline_prediction,
-        benchmark_gbdt
+        benchmark_implementations
 }
 
 criterion_main!(trusty);
