@@ -1,7 +1,9 @@
 #![allow(unused_must_use)]
-use arrow::array::{ArrayRef, Float64Array};
+use arrow::array::{Array, ArrayRef, Float64Array};
+use arrow::compute::concat;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use criterion::{criterion_group, criterion_main, Criterion};
 use gbdt::decision_tree::Data;
@@ -15,38 +17,71 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
 
-fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<(), Box<dyn std::error::Error>> {
-    batches.par_iter().for_each(|batch| {
-        let _prediction = trees.predict_batch(batch);
-    });
-    Ok(())
+const BATCHSIZE: usize = 256;
+
+type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+
+fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<Float64Array> {
+    let predictions: Vec<ArrayRef> = batches
+        .par_iter()
+        .map(|batch| -> Result<ArrayRef> {
+            Ok(Arc::new(
+                trees
+                    .predict_batch(batch)
+                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?,
+            ) as ArrayRef)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let arrays_ref: Vec<&dyn Array> = predictions.iter().map(|arr| arr.as_ref()).collect();
+    let concatenated =
+        concat(&arrays_ref).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+    concatenated
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or_else(|| {
+            Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
+        })
+        .map(|arr| arr.clone())
 }
 
 fn predict_batch_with_autoprune(
     trees: &Trees,
     batches: &[RecordBatch],
     feature_names: &Arc<Vec<String>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    batches.par_iter().for_each(|batch| {
-        let auto_pruned = trees.auto_prune(batch, feature_names).unwrap();
-        let _prediction = auto_pruned.predict_batch(batch);
-    });
-    Ok(())
-}
-
-fn predict_batch_with_gbdt(
-    model: &GBDT,
-    batches: &[RecordBatch],
-) -> Result<Vec<RecordBatch>, Box<dyn std::error::Error>> {
-    let schema = Arc::new(Schema::new(vec![Field::new(
-        "prediction",
-        DataType::Float64,
-        false,
-    )]));
-
-    let result: Vec<RecordBatch> = batches
+) -> Result<Float64Array> {
+    let predictions: Vec<Float64Array> = batches
         .par_iter()
         .map(|batch| {
+            trees
+                .auto_prune(batch, feature_names)
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
+                .and_then(|auto_pruned| {
+                    auto_pruned
+                        .predict_batch(batch)
+                        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let arrays_ref: Vec<&dyn Array> = predictions.iter().map(|a| a as &dyn Array).collect();
+    let concatenated =
+        concat(&arrays_ref).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+    Ok(concatenated
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or_else(|| {
+            Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
+        })?
+        .clone())
+}
+
+fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Float64Array> {
+    let predictions: Vec<Float64Array> = batches
+        .par_iter()
+        .map(|batch| -> Result<Float64Array> {
             let mut result = Vec::new();
             for row in 0..batch.num_rows() {
                 let mut row_data = Vec::new();
@@ -58,13 +93,21 @@ fn predict_batch_with_gbdt(
                 result.push(Data::new_test_data(row_data, None));
             }
             let predictions = model.predict(&result);
-
-            let prediction_array: ArrayRef = Arc::new(Float64Array::from(predictions));
-            RecordBatch::try_new(schema.clone(), vec![prediction_array]).unwrap()
+            Ok(Float64Array::from(predictions))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
-    Ok(result)
+    let arrays_ref: Vec<&dyn Array> = predictions.iter().map(|a| a as &dyn Array).collect();
+    let concatenated =
+        concat(&arrays_ref).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+    Ok(concatenated
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or_else(|| {
+            Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
+        })?
+        .clone())
 }
 
 mod data_loader {
@@ -74,7 +117,7 @@ mod data_loader {
         path: &str,
         batch_size: usize,
         use_float64: bool,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         if use_float64 {
             read_diamonds_csv_floats(path, batch_size)
         } else {
@@ -86,7 +129,7 @@ mod data_loader {
         path: &str,
         batch_size: usize,
         use_float64: bool,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         if use_float64 {
             read_airline_csv_floats(path, batch_size)
         } else {
@@ -96,7 +139,7 @@ mod data_loader {
     pub fn read_diamonds_csv(
         path: &str,
         batch_size: usize,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("carat", DataType::Float64, false),
@@ -131,7 +174,9 @@ mod data_loader {
             .with_batch_size(batch_size)
             .build(file)?;
 
-        let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
+        let batches: Vec<_> = csv
+            .collect::<std::result::Result<Vec<_>, ArrowError>>()
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
@@ -157,7 +202,7 @@ mod data_loader {
     pub fn read_diamonds_csv_floats(
         path: &str,
         batch_size: usize,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("carat", DataType::Float64, false),
@@ -192,7 +237,9 @@ mod data_loader {
             .with_batch_size(batch_size)
             .build(file)?;
 
-        let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
+        let batches: Vec<_> = csv
+            .collect::<std::result::Result<Vec<_>, ArrowError>>()
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
@@ -218,7 +265,7 @@ mod data_loader {
     pub fn read_airline_csv(
         path: &str,
         batch_size: usize,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("gender", DataType::Int64, false),
@@ -252,7 +299,9 @@ mod data_loader {
             .with_batch_size(batch_size)
             .build(file)?;
 
-        let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
+        let batches: Vec<_> = csv
+            .collect::<std::result::Result<Vec<_>, ArrowError>>()
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
@@ -278,7 +327,7 @@ mod data_loader {
     pub fn read_airline_csv_floats(
         path: &str,
         batch_size: usize,
-    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
             Field::new("gender", DataType::Float64, false),
@@ -316,7 +365,9 @@ mod data_loader {
             .with_batch_size(batch_size)
             .build(file)?;
 
-        let batches: Vec<_> = csv.collect::<Result<_, _>>()?;
+        let batches: Vec<_> = csv
+            .collect::<std::result::Result<Vec<_>, ArrowError>>()
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 
         let feature_schema = Arc::new(Schema::new(schema.fields()[0..23].to_vec()));
         let target_prediction_schema = Arc::new(Schema::new(schema.fields()[23..].to_vec()));
@@ -340,11 +391,20 @@ mod data_loader {
     }
 }
 
-fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
+fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
     let trees = load_model("tests/models/diamonds_model.json")?;
     let (data_batches, _) =
-        data_loader::load_diamonds_dataset("tests/data/diamonds_filtered.csv", 8192 / 48, false)?;
+        data_loader::load_diamonds_dataset("tests/data/diamonds_full.csv", BATCHSIZE, false)?;
+    let baseline_predictions = predict_batch(&trees, &data_batches)?;
+    let total_rows: usize = data_batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(
+        baseline_predictions.len(),
+        total_rows,
+        "Predictions length {} doesn't match total rows {}",
+        baseline_predictions.len(),
+        total_rows
+    );
 
     let predicate = {
         let mut pred = Predicate::new();
@@ -352,6 +412,25 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
         pred
     };
     let pruned_trees = trees.prune(&predicate);
+
+    let pruned_predictions = predict_batch(&pruned_trees, &data_batches)?;
+    assert_eq!(
+        pruned_predictions.len(),
+        total_rows,
+        "Pruned predictions length {} doesn't match total rows {}",
+        pruned_predictions.len(),
+        total_rows
+    );
+
+    let auto_pruned_predictions =
+        predict_batch_with_autoprune(&trees, &data_batches, &Arc::new(vec!["carat".to_string()]))?;
+    assert_eq!(
+        auto_pruned_predictions.len(),
+        total_rows,
+        "Auto-pruned predictions length {} doesn't match total rows {}",
+        auto_pruned_predictions.len(),
+        total_rows
+    );
 
     c.bench_function("trusty/diamonds/baseline", |b| {
         b.to_async(&rt)
@@ -363,7 +442,7 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
     });
 
-    c.bench_function("trust/diamonds/auto_pruning", |b| {
+    c.bench_function("trusty/diamonds/auto_pruning", |b| {
         b.to_async(&rt).iter(|| async {
             predict_batch_with_autoprune(
                 &trees,
@@ -376,12 +455,12 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-fn benchmark_airline_prediction(c: &mut Criterion) -> Result<(), Box<dyn Error>> {
+fn benchmark_airline_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
     let trees = load_model("tests/models/airline_model_float64.json")?;
     let (data_batches, _) = data_loader::load_airline_dataset(
         "tests/data/airline_filtered_float64.csv",
-        8192 / 48,
+        BATCHSIZE,
         true,
     )?;
     let predicate = {
@@ -428,11 +507,22 @@ fn benchmark_implementations(c: &mut Criterion) {
         let trees = load_model("tests/models/diamonds_model_float64.json")
             .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "tests/data/diamonds_filtered_float64.csv",
-            8192 / 48,
+            "tests/data/diamonds_full_float64.csv",
+            BATCHSIZE,
             true,
         )
         .expect("Failed to load diamonds data");
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let trusty_predictions = predict_batch(&trees, &batches)
+            .expect("Failed to generate trusty predictions for diamonds");
+        assert_eq!(
+            trusty_predictions.len(),
+            total_rows,
+            "Trusty diamonds predictions length {} doesn't match total rows {}",
+            trusty_predictions.len(),
+            total_rows
+        );
 
         c.bench_function("trusty/diamonds", |b| {
             b.to_async(&rt)
@@ -445,10 +535,21 @@ fn benchmark_implementations(c: &mut Criterion) {
             .expect("Failed to load airline model");
         let (batches, _) = data_loader::load_airline_dataset(
             "tests/data/airline_filtered_float64.csv",
-            8192 / 48,
+            BATCHSIZE,
             true,
         )
         .expect("Failed to load airline data");
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let gbdt_predictions = predict_batch_with_gbdt(&model, &batches)
+            .expect("Failed to generate GBDT predictions for airline");
+        assert_eq!(
+            gbdt_predictions.len(),
+            total_rows,
+            "GBDT airline predictions length {} doesn't match total rows {}",
+            gbdt_predictions.len(),
+            total_rows
+        );
 
         c.bench_function("gbdt/airline", |b| {
             b.to_async(&rt)
@@ -461,11 +562,23 @@ fn benchmark_implementations(c: &mut Criterion) {
             GBDT::from_xgboost_json_used_feature("tests/models/diamonds_model_float64.json")
                 .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "tests/data/diamonds_filtered_float64.csv",
-            8192 / 48,
+            "tests/data/diamonds_full_float64.csv",
+            BATCHSIZE,
             true,
         )
         .expect("Failed to load diamonds data");
+
+        // Validate GBDT predictions for diamonds
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let gbdt_predictions = predict_batch_with_gbdt(&model, &batches)
+            .expect("Failed to generate GBDT predictions for diamonds");
+        assert_eq!(
+            gbdt_predictions.len(),
+            total_rows,
+            "GBDT diamonds predictions length {} doesn't match total rows {}",
+            gbdt_predictions.len(),
+            total_rows
+        );
 
         c.bench_function("gbdt/diamonds", |b| {
             b.to_async(&rt)
@@ -474,7 +587,7 @@ fn benchmark_implementations(c: &mut Criterion) {
     }
 }
 
-fn load_model(path: &str) -> Result<Trees, Box<dyn Error>> {
+fn load_model(path: &str) -> Result<Trees> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let model_data: Value = serde_json::from_reader(reader)?;
