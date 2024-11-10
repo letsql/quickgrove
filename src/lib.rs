@@ -467,22 +467,24 @@ impl Tree {
 
     #[inline(always)]
     pub fn predict(&self, features: &[f64]) -> f64 {
-        let mut node = &self.nodes[0];
+        let mut node_idx = 0;
+        let nodes = &self.nodes;
 
-        while node.split_index != LEAF_NODE {
-            let feature_value = unsafe {
-                // SAFETY: feature_offset and split_index are validated during tree construction
-                *features.get_unchecked(self.feature_offset + node.split_index as usize)
-            };
+        loop {
+            let node = unsafe { nodes.get_unchecked(node_idx) };
+            if node.split_index == LEAF_NODE {
+                return node.weight;
+            }
 
-            node = &self.nodes[if feature_value < node.split_condition {
+            let feature_idx = self.feature_offset + node.split_index as usize;
+            let feature_value = unsafe { *features.get_unchecked(feature_idx) };
+
+            node_idx = if feature_value < node.split_condition {
                 node.left_child
             } else {
                 node.right_child
-            } as usize];
+            } as usize;
         }
-
-        node.weight
     }
 
     fn depth(&self) -> usize {
@@ -731,88 +733,69 @@ impl Trees {
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
         let mut builder = Float64Builder::with_capacity(num_rows);
-        let mut features = vec![0.0; self.feature_names.len()];
 
-        let feature_columns: Vec<Result<Arc<dyn Array>, ArrowError>> = self
-            .feature_names
-            .iter()
-            .zip(self.feature_types.iter())
-            .map(|(name, typ)| {
-                let col = batch.column_by_name(name).ok_or_else(|| {
-                    ArrowError::InvalidArgumentError(format!("Missing feature column: {}", name))
-                })?;
-                match typ.as_str() {
-                    "float" => {
-                        let array =
-                            col.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
-                                ArrowError::InvalidArgumentError(format!(
-                                    "Expected Float64Array for column: {}",
-                                    name
-                                ))
-                            })?;
-                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
-                    }
-                    "int" => {
-                        let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                            ArrowError::InvalidArgumentError(format!(
-                                "Expected Int64Array for column: {}",
-                                name
-                            ))
-                        })?;
-                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
-                    }
-                    "i" => {
-                        let array =
-                            col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
-                                ArrowError::InvalidArgumentError(format!(
-                                    "Expected BooleanArray for column: {}",
-                                    name
-                                ))
-                            })?;
-                        Ok(Arc::new(array.clone()) as Arc<dyn Array>)
-                    }
-                    _ => Err(ArrowError::InvalidArgumentError(format!(
+        let mut feature_values: Vec<Vec<f64>> = Vec::with_capacity(self.feature_names.len());
+
+        for (name, typ) in self.feature_names.iter().zip(self.feature_types.iter()) {
+            let col = batch.column_by_name(name).ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!("Missing feature column: {}", name))
+            })?;
+
+            let values = match typ.as_str() {
+                "float" => {
+                    let array = col.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "Expected Float64Array for column: {}",
+                            name
+                        ))
+                    })?;
+                    array.values().to_vec()
+                }
+                "int" => {
+                    let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "Expected Int64Array for column: {}",
+                            name
+                        ))
+                    })?;
+                    array.iter().map(|v| v.unwrap_or(0) as f64).collect()
+                }
+                "i" => {
+                    let array = col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "Expected BooleanArray for column: {}",
+                            name
+                        ))
+                    })?;
+                    array
+                        .iter()
+                        .map(|v| if v.unwrap_or(false) { 1.0 } else { 0.0 })
+                        .collect()
+                }
+                _ => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
                         "Unsupported feature type: {}",
                         typ
-                    ))),
+                    )))
                 }
-            })
-            .collect();
+            };
+            feature_values.push(values);
+        }
 
-        let feature_columns = feature_columns.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let mut row_features = vec![0.0; self.feature_names.len()];
 
         for row in 0..num_rows {
+            for (i, col) in feature_values.iter().enumerate() {
+                row_features[i] = col[row];
+            }
+
             let mut score = self.base_score;
-            for (i, col) in feature_columns.iter().enumerate() {
-                features[i] = if col.as_any().is::<Float64Array>() {
-                    col.as_any()
-                        .downcast_ref::<Float64Array>()
-                        .unwrap()
-                        .value(row)
-                } else if col.as_any().is::<Int64Array>() {
-                    col.as_any()
-                        .downcast_ref::<Int64Array>()
-                        .unwrap()
-                        .value(row) as f64
-                } else if col.as_any().is::<BooleanArray>() {
-                    let bool_array = col.as_any().downcast_ref::<BooleanArray>().unwrap();
-                    if bool_array.value(row) {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                } else {
-                    return Err(ArrowError::InvalidArgumentError(
-                        "Unsupported array type".to_string(),
-                    ));
-                };
-            }
             for tree in &self.trees {
-                score += tree.predict(&features);
+                score += tree.predict(&row_features);
             }
-            let final_score = self.objective.compute_score(score);
-            builder.append_value(final_score);
+            builder.append_value(self.objective.compute_score(score));
         }
+
         Ok(builder.finish())
     }
 
