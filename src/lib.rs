@@ -486,7 +486,6 @@ impl Tree {
         self.predict_one(root, features)
     }
 
-    #[inline(always)]
     fn predict_one(&self, node: &BinaryTreeNode, features: &[f64]) -> f64 {
         if node.value.is_leaf {
             return node.value.weight;
@@ -566,7 +565,6 @@ impl Tree {
 
         if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
             fn should_prune_direction(node: &DTNode, conditions: &[Condition]) -> Option<bool> {
-                // None = don't prune, Some(true) = prune left, Some(false) = prune right
                 for condition in conditions {
                     match condition {
                         Condition::LessThan(value) => {
@@ -837,7 +835,8 @@ impl Trees {
         let num_trees = self.trees.len();
 
         if num_trees > 100 {
-            const BATCH_SIZE: usize = 8;
+            const BATCH_SIZE: usize = 8; // This should probably depend on the Tree depth and
+                                         // number of nodes
             let tree_batches = self.trees.chunks(BATCH_SIZE);
 
             let mut scores = vec![self.base_score; num_rows];
@@ -1231,7 +1230,7 @@ mod tests {
         let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(feature_data)]).unwrap();
 
         let predictions = trees.predict_batch(&batch).unwrap();
-        assert_eq!(predictions.value(2), -0.5); // Missing value, default left: 0.5 (base_score) + -1.0
+        assert_eq!(predictions.value(2), -0.5);
     }
 
     #[test]

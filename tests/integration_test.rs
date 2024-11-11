@@ -40,8 +40,9 @@ mod tests {
 
     #[test]
     fn test_model_results() -> Result<(), Box<dyn Error>> {
-        let model_file = File::open("tests/models/diamonds_model.json")
-            .map_err(|e| format!("Failed to open model file: {}", e))?;
+        let model_file =
+            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
+                .map_err(|e| format!("Failed to open model file: {}", e))?;
 
         let reader = BufReader::new(model_file);
         let model_data: Value =
@@ -49,8 +50,10 @@ mod tests {
 
         let trees = Trees::load(&model_data)?;
 
-        let (preprocessed_batches, expected_results) =
-            read_diamonds_csv_to_split_batches("tests/data/diamonds_full.csv", 1024)?;
+        let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
+            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
+            1024,
+        )?;
 
         let expected_predictions: Vec<&Float64Array> = expected_results
             .iter()
@@ -91,8 +94,9 @@ mod tests {
 
     #[test]
     fn test_pruned_trees_prediction_output() -> Result<(), Box<dyn Error>> {
-        let model_file = File::open("tests/models/diamonds_model.json")
-            .map_err(|e| format!("Failed to open model file: {}", e))?;
+        let model_file =
+            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
+                .map_err(|e| format!("Failed to open model file: {}", e))?;
         let reader = BufReader::new(model_file);
         let model_data: Value =
             serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
@@ -101,8 +105,10 @@ mod tests {
         predicate.add_condition("carat".to_string(), Condition::LessThan(0.3));
         let pruned_trees = trees.prune(&predicate);
 
-        let (preprocessed_batches, expected_results) =
-            read_diamonds_csv_to_split_batches("tests/data/diamonds_filtered.csv", 1024)?;
+        let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
+            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
+            1024,
+        )?;
 
         let expected_predictions: Vec<&Float64Array> = expected_results
             .iter()
@@ -274,8 +280,9 @@ mod tests {
 
     #[test]
     fn test_pruned_trees_prediction() -> Result<(), Box<dyn Error>> {
-        let model_file = File::open("tests/models/diamonds_model.json")
-            .map_err(|e| format!("Failed to open model file: {}", e))?;
+        let model_file =
+            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
+                .map_err(|e| format!("Failed to open model file: {}", e))?;
 
         let reader = BufReader::new(model_file);
         let model_data: Value =
@@ -288,8 +295,10 @@ mod tests {
 
         let pruned_trees = trees.prune(&predicate);
 
-        let (preprocessed_batches, expected_results) =
-            read_diamonds_csv_to_split_batches("tests/data/diamonds_filtered.csv", 1024)?;
+        let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
+            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
+            1024,
+        )?;
 
         let expected_predictions: Vec<&Float64Array> = expected_results
             .iter()
@@ -328,8 +337,9 @@ mod tests {
 
     #[test]
     fn test_model_results_airline() -> Result<(), Box<dyn Error>> {
-        let model_file = File::open("tests/models/airline_model.json")
-            .map_err(|e| format!("Failed to open model file: {}", e))?;
+        let model_file =
+            File::open("tests/models/reg:squarederror/airline_model_trees_10_mixed.json")
+                .map_err(|e| format!("Failed to open model file: {}", e))?;
 
         let reader = BufReader::new(model_file);
         let model_data: Value =
@@ -337,8 +347,10 @@ mod tests {
 
         let trees = Trees::load(&model_data)?;
 
-        let (preprocessed_batches, expected_results) =
-            read_airline_csv_to_split_batches("tests/data/airline_filtered.csv", 1024)?;
+        let (preprocessed_batches, expected_results) = read_airline_csv_to_split_batches(
+            "tests/data/reg:squarederror/airline_data_filtered_mixed.csv",
+            1024,
+        )?;
 
         let expected_predictions: Vec<&Float64Array> = expected_results
             .iter()
