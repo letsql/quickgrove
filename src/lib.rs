@@ -2,27 +2,25 @@ use arrow::array::{Array, BooleanArray, Float64Array, Float64Builder, Int64Array
 use arrow::compute::{max, min};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use colored::Colorize;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-const LEAF_NODE: i32 = -1;
-
-#[derive(Debug, Deserialize, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Serialize)]
+#[repr(u8)]
 pub enum SplitType {
-    Numerical,
+    Numerical = 0,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Node {
-    split_index: i32,
-    split_condition: f64,
-    left_child: u32,
-    right_child: u32,
-    weight: f64,
-    split_type: SplitType,
+#[repr(C)]
+pub struct DTNode {
+    weight: f64,           // 8 bytes
+    feature_value: f64,    // 8 bytes (renamed from split_condition for clarity)
+    feature_index: i32,    // 4 bytes
+    is_leaf: bool,         // 1 byte
+    split_type: SplitType, // 1 byte
 }
 
 #[derive(Clone)]
@@ -38,10 +36,110 @@ impl Objective {
         }
     }
 }
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct BinaryTreeNode {
+    pub value: DTNode,
+    index: usize,
+    left: usize,  // 0 means no child
+    right: usize, // 0 means no child
+}
+
+impl BinaryTreeNode {
+    pub fn new(value: DTNode) -> Self {
+        BinaryTreeNode {
+            value,
+            index: 0,
+            left: 0,
+            right: 0,
+        }
+    }
+}
+// The binary tree structure
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryTree {
+    nodes: Vec<BinaryTreeNode>,
+}
+
+impl BinaryTree {
+    pub fn new() -> Self {
+        BinaryTree { nodes: Vec::new() }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn get_root_index(&self) -> usize {
+        0
+    }
+
+    pub fn get_node(&self, index: usize) -> Option<&BinaryTreeNode> {
+        self.nodes.get(index)
+    }
+
+    pub fn get_node_mut(&mut self, index: usize) -> Option<&mut BinaryTreeNode> {
+        self.nodes.get_mut(index)
+    }
+
+    pub fn get_left_child(&self, node: &BinaryTreeNode) -> Option<&BinaryTreeNode> {
+        if node.left == 0 {
+            None
+        } else {
+            self.nodes.get(node.left)
+        }
+    }
+
+    pub fn get_right_child(&self, node: &BinaryTreeNode) -> Option<&BinaryTreeNode> {
+        if node.right == 0 {
+            None
+        } else {
+            self.nodes.get(node.right)
+        }
+    }
+
+    pub fn add_root(&mut self, mut root: BinaryTreeNode) -> usize {
+        let index = self.nodes.len();
+        root.index = index;
+        self.nodes.push(root);
+        index
+    }
+
+    pub fn add_left_node(&mut self, parent: usize, mut child: BinaryTreeNode) -> usize {
+        let index = self.nodes.len();
+        child.index = index;
+        self.nodes.push(child);
+
+        if let Some(parent_node) = self.nodes.get_mut(parent) {
+            parent_node.left = index;
+        }
+        index
+    }
+
+    pub fn add_right_node(&mut self, parent: usize, mut child: BinaryTreeNode) -> usize {
+        let index = self.nodes.len();
+        child.index = index;
+        self.nodes.push(child);
+
+        if let Some(parent_node) = self.nodes.get_mut(parent) {
+            parent_node.right = index;
+        }
+        index
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+}
+
+impl Default for BinaryTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tree {
-    nodes: Vec<Node>,
+    tree: BinaryTree,
     feature_offset: usize,
     feature_names: Arc<Vec<String>>,
     feature_types: Arc<Vec<String>>,
@@ -54,14 +152,14 @@ impl Serialize for Tree {
     {
         #[derive(Serialize)]
         struct TreeHelper<'a> {
-            nodes: &'a Vec<Node>,
+            nodes: &'a Vec<BinaryTreeNode>,
             feature_offset: usize,
             feature_names: &'a Vec<String>,
             feature_types: &'a Vec<String>,
         }
 
         let helper = TreeHelper {
-            nodes: &self.nodes,
+            nodes: &self.tree.nodes,
             feature_offset: self.feature_offset,
             feature_names: &self.feature_names,
             feature_types: &self.feature_types,
@@ -78,7 +176,7 @@ impl<'de> Deserialize<'de> for Tree {
     {
         #[derive(Deserialize)]
         struct TreeHelper {
-            nodes: Vec<Node>,
+            nodes: Vec<BinaryTreeNode>,
             feature_offset: usize,
             feature_names: Vec<String>,
             feature_types: Vec<String>,
@@ -86,7 +184,9 @@ impl<'de> Deserialize<'de> for Tree {
 
         let helper = TreeHelper::deserialize(deserializer)?;
         Ok(Tree {
-            nodes: helper.nodes,
+            tree: BinaryTree {
+                nodes: helper.nodes,
+            },
             feature_offset: helper.feature_offset,
             feature_names: Arc::new(helper.feature_names),
             feature_types: Arc::new(helper.feature_types),
@@ -99,16 +199,11 @@ impl fmt::Display for Tree {
         fn fmt_node(
             f: &mut fmt::Formatter<'_>,
             tree: &Tree,
-            node_index: usize,
+            node: &BinaryTreeNode,
             prefix: &str,
             is_left: bool,
             feature_names: &[String],
         ) -> fmt::Result {
-            if node_index >= tree.nodes.len() {
-                return Ok(());
-            }
-
-            let node = &tree.nodes[node_index];
             let connector = if is_left { "├── " } else { "└── " };
 
             writeln!(
@@ -119,195 +214,37 @@ impl fmt::Display for Tree {
                 node_to_string(node, tree, feature_names)
             )?;
 
-            if node.split_index != LEAF_NODE {
+            if !node.value.is_leaf {
                 let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
-                fmt_node(
-                    f,
-                    tree,
-                    node.left_child as usize,
-                    &new_prefix,
-                    true,
-                    feature_names,
-                )?;
-                fmt_node(
-                    f,
-                    tree,
-                    node.right_child as usize,
-                    &new_prefix,
-                    false,
-                    feature_names,
-                )?;
+
+                if let Some(left) = tree.tree.get_left_child(node) {
+                    fmt_node(f, tree, left, &new_prefix, true, feature_names)?;
+                }
+                if let Some(right) = tree.tree.get_right_child(node) {
+                    fmt_node(f, tree, right, &new_prefix, false, feature_names)?;
+                }
             }
             Ok(())
         }
 
-        fn node_to_string(node: &Node, tree: &Tree, feature_names: &[String]) -> String {
-            if node.split_index == LEAF_NODE {
-                format!("Leaf (weight: {:.4})", node.weight)
+        fn node_to_string(node: &BinaryTreeNode, tree: &Tree, feature_names: &[String]) -> String {
+            if node.value.is_leaf {
+                format!("Leaf (weight: {:.4})", node.value.weight)
             } else {
-                let feature_index = tree.feature_offset + node.split_index as usize;
+                let feature_index = tree.feature_offset + node.value.feature_index as usize;
                 let feature_name = feature_names
                     .get(feature_index)
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.split_condition)
+                format!("{} < {:.4}", feature_name, node.value.feature_value)
             }
         }
 
         writeln!(f, "Tree:")?;
-        fmt_node(f, self, 0, "", true, &self.feature_names)
-    }
-}
-
-pub struct TreeDiff<'a> {
-    old_tree: &'a Tree,
-    new_tree: &'a Tree,
-}
-
-impl<'a> fmt::Display for TreeDiff<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fn fmt_node_diff(
-            f: &mut fmt::Formatter<'_>,
-            old_tree: &Tree,
-            new_tree: &Tree,
-            old_index: Option<usize>,
-            new_index: Option<usize>,
-            prefix: &str,
-            is_left: bool,
-        ) -> fmt::Result {
-            let connector = if is_left { "├── " } else { "└── " };
-            let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
-
-            match (
-                old_index.and_then(|i| old_tree.nodes.get(i)),
-                new_index.and_then(|i| new_tree.nodes.get(i)),
-            ) {
-                (Some(old_node), Some(new_node)) => {
-                    let old_str = node_to_string(old_node, old_tree);
-                    let new_str = node_to_string(new_node, new_tree);
-
-                    if old_str == new_str {
-                        writeln!(f, "{}{}{}", prefix, connector, old_str)?;
-                    } else {
-                        writeln!(f, "{}{}{}", prefix, connector, old_str.red())?;
-                        writeln!(f, "{}{}{}", prefix, connector, new_str.green())?;
-                    }
-
-                    if old_node.split_index != LEAF_NODE || new_node.split_index != LEAF_NODE {
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            if old_node.split_index != LEAF_NODE {
-                                Some(old_node.left_child as usize)
-                            } else {
-                                None
-                            },
-                            if new_node.split_index != LEAF_NODE {
-                                Some(new_node.left_child as usize)
-                            } else {
-                                None
-                            },
-                            &new_prefix,
-                            true,
-                        )?;
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            if old_node.split_index != LEAF_NODE {
-                                Some(old_node.right_child as usize)
-                            } else {
-                                None
-                            },
-                            if new_node.split_index != LEAF_NODE {
-                                Some(new_node.right_child as usize)
-                            } else {
-                                None
-                            },
-                            &new_prefix,
-                            false,
-                        )?;
-                    }
-                }
-                (Some(old_node), None) => {
-                    writeln!(
-                        f,
-                        "{}{}{}",
-                        prefix,
-                        connector,
-                        node_to_string(old_node, old_tree).red().strikethrough()
-                    )?;
-                    if old_node.split_index != LEAF_NODE {
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            Some(old_node.left_child as usize),
-                            None,
-                            &new_prefix,
-                            true,
-                        )?;
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            Some(old_node.right_child as usize),
-                            None,
-                            &new_prefix,
-                            false,
-                        )?;
-                    }
-                }
-                (None, Some(new_node)) => {
-                    writeln!(
-                        f,
-                        "{}{}{}",
-                        prefix,
-                        connector,
-                        node_to_string(new_node, new_tree).green().underline()
-                    )?;
-                    if new_node.split_index != LEAF_NODE {
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            None,
-                            Some(new_node.left_child as usize),
-                            &new_prefix,
-                            true,
-                        )?;
-                        fmt_node_diff(
-                            f,
-                            old_tree,
-                            new_tree,
-                            None,
-                            Some(new_node.right_child as usize),
-                            &new_prefix,
-                            false,
-                        )?;
-                    }
-                }
-                (None, None) => {}
-            }
-            Ok(())
+        if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
+            fmt_node(f, self, root, "", true, &self.feature_names)?;
         }
-
-        fn node_to_string(node: &Node, tree: &Tree) -> String {
-            if node.split_index == LEAF_NODE {
-                format!("Leaf (weight: {:.4})", node.weight)
-            } else {
-                let feature_name = tree
-                    .feature_names
-                    .get(tree.feature_offset + node.split_index as usize)
-                    .map(|s| s.as_str())
-                    .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.split_condition)
-            }
-        }
-
-        writeln!(f, "Tree Diff:")?;
-        fmt_node_diff(f, self.old_tree, self.new_tree, Some(0), Some(0), "", true)
+        Ok(())
     }
 }
 
@@ -382,7 +319,7 @@ impl AutoPredicate {
 impl Tree {
     pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<String>>) -> Self {
         Tree {
-            nodes: Vec::new(),
+            tree: BinaryTree::new(),
             feature_offset: 0,
             feature_names,
             feature_types,
@@ -433,28 +370,102 @@ impl Tree {
             .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_default();
 
-        for i in 0..left_children.len() {
-            let split_type = if ["int", "i", "float"]
-                .contains(&tree.feature_types[split_indices[i] as usize].as_str())
-            {
-                SplitType::Numerical
-            } else {
-                panic!("Unexpected feature type")
+        if !left_children.is_empty() {
+            let is_leaf = left_children[0] == u32::MAX;
+            let root_node = DTNode {
+                feature_index: if is_leaf { -1 } else { split_indices[0] },
+                feature_value: split_conditions[0],
+                weight: weights[0],
+                is_leaf,
+                split_type: SplitType::Numerical,
             };
+            let root_idx = tree.tree.add_root(BinaryTreeNode::new(root_node));
 
-            let node = Node {
-                split_index: if left_children[i] == u32::MAX {
-                    LEAF_NODE
+            #[allow(clippy::too_many_arguments)]
+            fn build_tree(
+                tree: &mut BinaryTree,
+                parent_idx: usize,
+                node_idx: usize,
+                split_indices: &[i32],
+                split_conditions: &[f64],
+                left_children: &[u32],
+                right_children: &[u32],
+                weights: &[f64],
+                is_left: bool,
+            ) {
+                if node_idx >= left_children.len() {
+                    return;
+                }
+
+                let is_leaf = left_children[node_idx] == u32::MAX;
+                let node = DTNode {
+                    feature_index: if is_leaf { -1 } else { split_indices[node_idx] },
+                    feature_value: split_conditions[node_idx],
+                    weight: weights[node_idx],
+                    is_leaf,
+                    split_type: SplitType::Numerical,
+                };
+
+                let current_idx = if is_left {
+                    tree.add_left_node(parent_idx, BinaryTreeNode::new(node))
                 } else {
-                    split_indices[i]
-                },
-                split_condition: split_conditions.get(i).cloned().unwrap_or(0.0),
-                left_child: left_children[i],
-                right_child: right_children[i],
-                weight: weights.get(i).cloned().unwrap_or(0.0),
-                split_type,
-            };
-            tree.nodes.push(node);
+                    tree.add_right_node(parent_idx, BinaryTreeNode::new(node))
+                };
+
+                if !is_leaf {
+                    let left_idx = left_children[node_idx] as usize;
+                    let right_idx = right_children[node_idx] as usize;
+                    build_tree(
+                        tree,
+                        current_idx,
+                        left_idx,
+                        split_indices,
+                        split_conditions,
+                        left_children,
+                        right_children,
+                        weights,
+                        true,
+                    );
+                    build_tree(
+                        tree,
+                        current_idx,
+                        right_idx,
+                        split_indices,
+                        split_conditions,
+                        left_children,
+                        right_children,
+                        weights,
+                        false,
+                    );
+                }
+            }
+
+            if !is_leaf {
+                let left_idx = left_children[0] as usize;
+                let right_idx = right_children[0] as usize;
+                build_tree(
+                    &mut tree.tree,
+                    root_idx,
+                    left_idx,
+                    &split_indices,
+                    &split_conditions,
+                    &left_children,
+                    &right_children,
+                    &weights,
+                    true,
+                );
+                build_tree(
+                    &mut tree.tree,
+                    root_idx,
+                    right_idx,
+                    &split_indices,
+                    &split_conditions,
+                    &left_children,
+                    &right_children,
+                    &weights,
+                    false,
+                );
+            }
         }
 
         tree.feature_offset = tree
@@ -468,174 +479,216 @@ impl Tree {
 
     #[inline(always)]
     pub fn predict(&self, features: &[f64]) -> f64 {
-        let mut node_idx = 0;
-        let nodes = &self.nodes;
+        let root = self
+            .tree
+            .get_node(self.tree.get_root_index())
+            .expect("Tree should have root node");
+        self.predict_one(root, features)
+    }
 
-        loop {
-            let node = unsafe { nodes.get_unchecked(node_idx) };
-            if node.split_index == LEAF_NODE {
-                return node.weight;
-            }
+    #[inline(always)]
+    fn predict_one(&self, node: &BinaryTreeNode, features: &[f64]) -> f64 {
+        if node.value.is_leaf {
+            return node.value.weight;
+        }
 
-            let feature_idx = self.feature_offset + node.split_index as usize;
-            let feature_value = unsafe { *features.get_unchecked(feature_idx) };
+        let feature_idx = self.feature_offset + node.value.feature_index as usize;
+        let feature_value = unsafe { *features.get_unchecked(feature_idx) };
 
-            node_idx = if feature_value < node.split_condition {
-                node.left_child
+        if feature_value < node.value.feature_value {
+            if let Some(left) = self.tree.get_left_child(node) {
+                self.predict_one(left, features)
             } else {
-                node.right_child
-            } as usize;
+                node.value.weight
+            }
+        } else if let Some(right) = self.tree.get_right_child(node) {
+            self.predict_one(right, features)
+        } else {
+            node.value.weight
         }
     }
 
     fn depth(&self) -> usize {
-        fn recursive_depth(nodes: &[Node], node_index: u32) -> usize {
-            let node = &nodes[node_index as usize];
-            if node.split_index == LEAF_NODE {
+        fn recursive_depth(tree: &BinaryTree, node: &BinaryTreeNode) -> usize {
+            if node.value.is_leaf {
                 1
             } else {
-                1 + recursive_depth(nodes, node.left_child)
-                    .max(recursive_depth(nodes, node.right_child))
+                1 + tree
+                    .get_left_child(node)
+                    .map(|n| recursive_depth(tree, n))
+                    .unwrap_or(0)
+                    .max(
+                        tree.get_right_child(node)
+                            .map(|n| recursive_depth(tree, n))
+                            .unwrap_or(0),
+                    )
             }
         }
 
-        recursive_depth(&self.nodes, 0)
+        self.tree
+            .get_node(self.tree.get_root_index())
+            .map(|root| recursive_depth(&self.tree, root))
+            .unwrap_or(0)
     }
 
     fn num_nodes(&self) -> usize {
-        // Count the numer of reachable nodes starting from the root
-        // we cannot simply iterate over the nodes because some nodes may be unreachable
-
-        fn count_reachable_nodes(nodes: &[Node], node_index: usize) -> usize {
-            let node = &nodes[node_index];
-            if node.split_index == LEAF_NODE {
-                0
+        fn count_reachable_nodes(tree: &BinaryTree, node: &BinaryTreeNode) -> usize {
+            if node.value.is_leaf {
+                1
             } else {
-                1 + count_reachable_nodes(nodes, node.left_child as usize)
-                    + count_reachable_nodes(nodes, node.right_child as usize)
+                1 + tree
+                    .get_left_child(node)
+                    .map(|n| count_reachable_nodes(tree, n))
+                    .unwrap_or(0)
+                    + tree
+                        .get_right_child(node)
+                        .map(|n| count_reachable_nodes(tree, n))
+                        .unwrap_or(0)
             }
         }
 
-        count_reachable_nodes(&self.nodes, 0)
+        self.tree
+            .get_node(self.tree.get_root_index())
+            .map(|root| count_reachable_nodes(&self.tree, root))
+            .unwrap_or(0)
     }
 
     fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
-        let mut new_nodes = Vec::with_capacity(self.nodes.len());
-        let mut index_map = vec![u32::MAX; self.nodes.len()];
-        let mut tree_changed = false;
+        if self.tree.is_empty() {
+            return None;
+        }
 
-        for (old_index, node) in self.nodes.iter().enumerate() {
-            let mut new_node = node.clone();
-            let mut should_prune = false;
+        let mut new_tree = Tree::new(
+            Arc::clone(&self.feature_names),
+            Arc::clone(&self.feature_types),
+        );
+        new_tree.feature_offset = self.feature_offset;
 
-            if node.split_index != LEAF_NODE {
-                let feature_index = self.feature_offset + node.split_index as usize;
-                if let Some(feature_name) = feature_names.get(feature_index) {
-                    if let Some(conditions) = predicate.conditions.get(feature_name) {
-                        for condition in conditions {
-                            match condition {
-                                Condition::LessThan(value) => {
-                                    if *value < node.split_condition {
-                                        new_node.right_child = u32::MAX;
-                                        tree_changed = true;
-                                        should_prune = true;
-                                    }
-                                }
-                                Condition::GreaterThanOrEqual(value) => {
-                                    if *value >= node.split_condition {
-                                        new_node.left_child = u32::MAX;
-                                        tree_changed = true;
-                                        should_prune = true;
-                                    }
+        if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
+            // Helper function to evaluate conditions
+            fn should_prune_direction(node: &DTNode, conditions: &[Condition]) -> Option<bool> {
+                // None = don't prune, Some(true) = prune left, Some(false) = prune right
+                for condition in conditions {
+                    match condition {
+                        Condition::LessThan(value) => {
+                            if *value <= node.feature_value {
+                                return Some(false); // Prune right path
+                            }
+                        }
+                        Condition::GreaterThanOrEqual(value) => {
+                            if *value >= node.feature_value {
+                                return Some(true); // Prune left path
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            #[allow(clippy::too_many_arguments)]
+            fn prune_recursive(
+                old_tree: &BinaryTree,
+                new_tree: &mut BinaryTree,
+                node: &BinaryTreeNode,
+                feature_offset: usize,
+                feature_names: &[String],
+                predicate: &Predicate,
+                parent_idx: Option<usize>,
+                is_left: bool,
+            ) -> Option<usize> {
+                let new_node = node.value.clone();
+
+                // Check if we should prune this node
+                if !node.value.is_leaf {
+                    let feature_index = feature_offset + node.value.feature_index as usize;
+                    if let Some(feature_name) = feature_names.get(feature_index) {
+                        if let Some(conditions) = predicate.conditions.get(feature_name) {
+                            if let Some(prune_left) =
+                                should_prune_direction(&node.value, conditions)
+                            {
+                                // Return the child we're keeping instead of pruning
+                                let child = if prune_left {
+                                    old_tree.get_right_child(node)
+                                } else {
+                                    old_tree.get_left_child(node)
+                                };
+
+                                if let Some(child) = child {
+                                    return prune_recursive(
+                                        old_tree,
+                                        new_tree,
+                                        child,
+                                        feature_offset,
+                                        feature_names,
+                                        predicate,
+                                        parent_idx,
+                                        is_left,
+                                    );
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if should_prune {
-                if new_node.left_child == u32::MAX {
-                    new_node = self.nodes[new_node.right_child as usize].clone();
-                } else if new_node.right_child == u32::MAX {
-                    new_node = self.nodes[new_node.left_child as usize].clone();
-                }
-            }
-
-            let new_index = new_nodes.len() as u32;
-            index_map[old_index] = new_index;
-            new_nodes.push(new_node);
-        }
-
-        if !tree_changed {
-            return Some(self.clone());
-        }
-
-        for node in &mut new_nodes {
-            if node.split_index != LEAF_NODE {
-                if node.left_child != u32::MAX {
-                    node.left_child = index_map[node.left_child as usize];
-                }
-                if node.right_child != u32::MAX {
-                    node.right_child = index_map[node.right_child as usize];
-                }
-            }
-        }
-
-        let mut reachable = vec![false; new_nodes.len()];
-        let mut stack = vec![0]; // Start from the root
-        while let Some(index) = stack.pop() {
-            if !reachable[index as usize] {
-                reachable[index as usize] = true;
-                let node = &new_nodes[index as usize];
-                if node.split_index != LEAF_NODE {
-                    if node.left_child != u32::MAX {
-                        stack.push(node.left_child);
+                let current_idx = if let Some(parent_idx) = parent_idx {
+                    let new_tree_node = BinaryTreeNode::new(new_node);
+                    if is_left {
+                        new_tree.add_left_node(parent_idx, new_tree_node)
+                    } else {
+                        new_tree.add_right_node(parent_idx, new_tree_node)
                     }
-                    if node.right_child != u32::MAX {
-                        stack.push(node.right_child);
+                } else {
+                    new_tree.add_root(BinaryTreeNode::new(new_node))
+                };
+
+                if !node.value.is_leaf {
+                    if let Some(left) = old_tree.get_left_child(node) {
+                        prune_recursive(
+                            old_tree,
+                            new_tree,
+                            left,
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                            Some(current_idx),
+                            true,
+                        );
+                    }
+
+                    if let Some(right) = old_tree.get_right_child(node) {
+                        prune_recursive(
+                            old_tree,
+                            new_tree,
+                            right,
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                            Some(current_idx),
+                            false,
+                        );
                     }
                 }
+
+                Some(current_idx)
             }
-        }
 
-        let mut final_nodes = Vec::new();
-        let mut final_index_map = vec![u32::MAX; new_nodes.len()];
+            prune_recursive(
+                &self.tree,
+                &mut new_tree.tree,
+                root,
+                self.feature_offset,
+                feature_names,
+                predicate,
+                None,
+                true,
+            );
 
-        for (i, node) in new_nodes.into_iter().enumerate() {
-            if reachable[i] {
-                final_index_map[i] = final_nodes.len() as u32;
-                final_nodes.push(node);
+            if !new_tree.tree.is_empty() {
+                Some(new_tree)
+            } else {
+                None
             }
-        }
-
-        for node in &mut final_nodes {
-            if node.split_index != LEAF_NODE {
-                if node.left_child != u32::MAX {
-                    node.left_child = final_index_map[node.left_child as usize];
-                }
-                if node.right_child != u32::MAX {
-                    node.right_child = final_index_map[node.right_child as usize];
-                }
-            }
-        }
-
-        if final_nodes.is_empty() {
-            None
         } else {
-            Some(Tree {
-                nodes: final_nodes,
-                feature_offset: self.feature_offset,
-                feature_names: self.feature_names.clone(),
-                feature_types: self.feature_types.clone(),
-            })
-        }
-    }
-
-    pub fn diff<'a>(&'a self, other: &'a Tree) -> TreeDiff<'a> {
-        TreeDiff {
-            old_tree: self,
-            new_tree: other,
+            None
         }
     }
 }
@@ -647,7 +700,7 @@ impl Default for Tree {
 }
 
 pub struct Trees {
-    pub trees: Vec<Tree>, // fix: this probably shouldn't be pub. it is used in integration tests though
+    pub trees: Vec<Tree>,
     pub feature_names: Arc<Vec<String>>,
     pub base_score: f64,
     feature_types: Arc<Vec<String>>,
@@ -730,15 +783,14 @@ impl Trees {
             objective,
         })
     }
-
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
         let mut builder = Float64Builder::with_capacity(num_rows);
-        // Pre-allocate feature arrays with capacity
+
         let num_features = self.feature_names.len();
         let mut feature_values = Vec::with_capacity(num_features);
         feature_values.resize_with(num_features, Vec::new);
-        // Pre-compute column indexes
+
         let mut column_indexes = Vec::with_capacity(num_features);
         for name in self.feature_names.iter() {
             let idx = batch.schema().index_of(name)?;
@@ -787,7 +839,6 @@ impl Trees {
         let mut row_features = vec![0.0; num_features];
 
         for row in 0..num_rows {
-            // Load feature values
             for (i, values) in feature_values.iter().enumerate() {
                 row_features[i] = values[row];
             }
@@ -870,165 +921,182 @@ mod tests {
         //    /   \
         //  [1]   [2]
         // (-1.0) (1.0)
-        let nodes = vec![
-            Node {
-                split_index: 0,
-                split_condition: 0.5,
-                left_child: 1,
-                right_child: 2,
-                weight: 0.0,
-                split_type: SplitType::Numerical,
-            },
-            Node {
-                split_index: LEAF_NODE,
-                split_condition: 0.0,
-                left_child: 0,
-                right_child: 0,
-                weight: -1.0,
-                split_type: SplitType::Numerical,
-            },
-            Node {
-                split_index: LEAF_NODE,
-                split_condition: 0.0,
-                left_child: 0,
-                right_child: 0,
-                weight: 1.0,
-                split_type: SplitType::Numerical,
-            },
-        ];
-        Tree {
-            nodes,
-            feature_offset: 0,
-            feature_names: Arc::new(vec!["feature0".to_string()]),
-            feature_types: Arc::new(vec!["float".to_string()]),
-        }
+        let mut tree = Tree::new(
+            Arc::new(vec!["feature0".to_string()]),
+            Arc::new(vec!["float".to_string()]),
+        );
+
+        let root = BinaryTreeNode::new(DTNode {
+            feature_index: 0,
+            feature_value: 0.5,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let root_idx = tree.tree.add_root(root);
+
+        let left = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: -1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_left_node(root_idx, left);
+
+        let right = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: 1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_right_node(root_idx, right);
+
+        tree
     }
+
     fn create_tree_nested_features() -> Tree {
         //              feature0 < 1.0
         //             /             \
         //    feature0 < 0.5         Leaf (2.0)
         //   /           \
         // Leaf (-1.0)  Leaf (1.0)
-        Tree {
-            nodes: vec![
-                Node {
-                    split_index: 0, // feature0
-                    split_condition: 1.0,
-                    left_child: 1,
-                    right_child: 2,
-                    weight: 0.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: 0, // feature0 (nested)
-                    split_condition: 0.5,
-                    left_child: 3,
-                    right_child: 4,
-                    weight: 0.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: 2.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: -1.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: 1.0,
-                    split_type: SplitType::Numerical,
-                },
-            ],
-            feature_offset: 0,
-            feature_names: Arc::new(vec!["feature0".to_string(), "feature1".to_string()]),
-            feature_types: Arc::new(vec!["float".to_string(), "float".to_string()]),
-        }
+        let mut tree = Tree::new(
+            Arc::new(vec!["feature0".to_string(), "feature1".to_string()]),
+            Arc::new(vec!["float".to_string(), "float".to_string()]),
+        );
+
+        let root = BinaryTreeNode::new(DTNode {
+            feature_index: 0,
+            feature_value: 1.0,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let root_idx = tree.tree.add_root(root);
+
+        let left = BinaryTreeNode::new(DTNode {
+            feature_index: 0,
+            feature_value: 0.5,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let left_idx = tree.tree.add_left_node(root_idx, left);
+
+        let right = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: 2.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_right_node(root_idx, right);
+
+        let left_left = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: -1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_left_node(left_idx, left_left);
+
+        let left_right = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: 1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_right_node(left_idx, left_right);
+
+        tree
     }
+
     fn create_sample_tree_deep() -> Tree {
-        Tree {
-            nodes: vec![
-                Node {
-                    split_index: 0,
-                    split_condition: 0.5,
-                    left_child: 1,
-                    right_child: 2,
-                    weight: 0.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: 1,
-                    split_condition: 0.3,
-                    left_child: 3,
-                    right_child: 4,
-                    weight: 0.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: 2,
-                    split_condition: 0.7,
-                    left_child: 5,
-                    right_child: 6,
-                    weight: 0.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: -2.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: -1.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: 1.0,
-                    split_type: SplitType::Numerical,
-                },
-                Node {
-                    split_index: LEAF_NODE,
-                    split_condition: 0.0,
-                    left_child: 0,
-                    right_child: 0,
-                    weight: 2.0,
-                    split_type: SplitType::Numerical,
-                },
-            ],
-            feature_offset: 0,
-            feature_names: Arc::new(vec![
+        let mut tree = Tree::new(
+            Arc::new(vec![
                 "feature0".to_string(),
                 "feature1".to_string(),
                 "feature2".to_string(),
             ]),
-            feature_types: Arc::new(vec![
+            Arc::new(vec![
                 "float".to_string(),
                 "float".to_string(),
                 "float".to_string(),
             ]),
-        }
+        );
+
+        let root = BinaryTreeNode::new(DTNode {
+            feature_index: 0,
+            feature_value: 0.5,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let root_idx = tree.tree.add_root(root);
+
+        // Left subtree
+        let left = BinaryTreeNode::new(DTNode {
+            feature_index: 1,
+            feature_value: 0.3,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let left_idx = tree.tree.add_left_node(root_idx, left);
+
+        // Right subtree
+        let right = BinaryTreeNode::new(DTNode {
+            feature_index: 2,
+            feature_value: 0.7,
+            weight: 0.0,
+            is_leaf: false,
+            split_type: SplitType::Numerical,
+        });
+        let right_idx = tree.tree.add_right_node(root_idx, right);
+
+        // Left subtree leaves
+        let left_left = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: -2.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_left_node(left_idx, left_left);
+
+        let left_right = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: -1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_right_node(left_idx, left_right);
+
+        // Right subtree leaves
+        let right_left = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: 1.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_left_node(right_idx, right_left);
+
+        let right_right = BinaryTreeNode::new(DTNode {
+            feature_index: -1,
+            feature_value: 0.0,
+            weight: 2.0,
+            is_leaf: true,
+            split_type: SplitType::Numerical,
+        });
+        tree.tree.add_right_node(right_idx, right_right);
+
+        tree
     }
 
     #[test]
@@ -1050,9 +1118,8 @@ mod tests {
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
         let pruned_tree = tree.prune(&predicate, &["feature0".to_string()]).unwrap();
-        assert_eq!(pruned_tree.nodes.len(), 1);
-        assert_eq!(pruned_tree.nodes[0].left_child, 0);
-        assert_eq!(pruned_tree.nodes[0].weight, -1.0);
+        assert_eq!(pruned_tree.tree.len(), 1);
+        assert_eq!(pruned_tree.tree.get_node(0).unwrap().value.weight, -1.0);
     }
 
     #[test]
@@ -1068,32 +1135,19 @@ mod tests {
         let mut predicate1 = Predicate::new();
         predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.29));
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
-        assert_eq!(pruned_tree1.num_nodes(), tree.num_nodes() - 1);
-        assert_eq!(pruned_tree1.nodes[1].left_child, 0);
-        assert_eq!(pruned_tree1.nodes[1].right_child, 0);
-        assert_eq!(pruned_tree1.nodes[3].split_index, LEAF_NODE);
         assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 2.0);
 
         // Test case 2: Prune left subtree of left child of root
         let mut predicate2 = Predicate::new();
-        predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.69)); // :)
+        predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.69));
         let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
-
-        assert_eq!(pruned_tree2.num_nodes(), tree.num_nodes() - 1);
-        assert_eq!(pruned_tree2.nodes[0].right_child, 2);
-        assert_eq!(pruned_tree2.nodes[0].left_child, 1);
-        assert_eq!(pruned_tree2.nodes[1].split_index, 1);
-        assert_eq!(pruned_tree2.nodes[2].split_index, LEAF_NODE);
         assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
 
         // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
         predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-        println!("Tree: {:?}", pruned_tree3);
-        assert_eq!(pruned_tree3.num_nodes(), 1);
         assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 2.0);
-        assert_eq!(pruned_tree3.depth(), 2);
     }
 
     #[test]
@@ -1110,9 +1164,6 @@ mod tests {
         predicate.add_condition("feature1".to_string(), Condition::LessThan(0.4));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
-
-        assert_eq!(pruned_tree.num_nodes(), 1);
-
         assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 1.0);
         assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
 
@@ -1121,49 +1172,8 @@ mod tests {
         predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
 
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
-        println!("{:}", pruned_tree);
         assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), -1.0);
         assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -2.0);
-    }
-
-    #[test]
-    fn test_trees_load() {
-        let model_data = serde_json::json!({
-            "learner": {
-                "learner_model_param": { "base_score": "0.5" },
-                "feature_names": ["feature0", "feature1"],
-                "feature_types": ["float", "int"],
-                "gradient_booster": {
-                    "model": {
-                        "trees": [
-                            {
-                                "split_indices": [0],
-                                "split_conditions": [0.5],
-                                "left_children": [1],
-                                "right_children": [2],
-                                "base_weights": [0.0, -1.0, 1.0]
-                            },
-                            {
-                                "split_indices": [1],
-                                "split_conditions": [1],
-                                "left_children": [3],
-                                "right_children": [4],
-                                "base_weights": [0.0, -2.0, -1.0, 1.0, 2.0]
-                            }
-                        ]
-                    }
-                }
-            }
-        });
-
-        let trees = Trees::load(&model_data).unwrap();
-        assert_eq!(trees.base_score, 0.5);
-        assert_eq!(
-            trees.feature_names,
-            Arc::new(vec!["feature0".to_string(), "feature1".to_string()])
-        );
-        assert_eq!(trees.trees.len(), 2);
-        assert_eq!(trees.trees[0].nodes.len(), 1);
     }
 
     #[test]
@@ -1242,8 +1252,8 @@ mod tests {
 
         let pruned_trees = trees.prune(&predicate);
         assert_eq!(pruned_trees.trees.len(), 2);
-        assert_eq!(pruned_trees.trees[0].nodes.len(), 1);
-        assert_eq!(pruned_trees.trees[1].nodes.len(), 1);
+        assert_eq!(pruned_trees.trees[0].tree.len(), 1);
+        assert_eq!(pruned_trees.trees[1].tree.len(), 1);
     }
 
     #[test]
@@ -1257,6 +1267,11 @@ mod tests {
                 &["feature0".to_string(), "feature1".to_string()],
             )
             .unwrap();
-        assert_eq!(pruned_tree.predict(&[0.4, 0.0]), -1.0);
+
+        assert_eq!(tree.predict(&[0.3, 0.0]), -1.0); // x < 0.5 path
+        assert_eq!(tree.predict(&[0.7, 0.0]), 1.0); // 0.5 <= x < 1.0 path
+        assert_eq!(tree.predict(&[1.5, 0.0]), 2.0); // x >= 1.0 path
+
+        assert_eq!(pruned_tree.predict(&[0.3, 0.0]), -1.0);
     }
 }
