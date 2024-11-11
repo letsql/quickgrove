@@ -43,7 +43,7 @@ fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<Float64Array>
         .ok_or_else(|| {
             Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
         })
-        .map(|arr| arr.clone())
+        .cloned()
 }
 
 fn predict_batch_with_autoprune(

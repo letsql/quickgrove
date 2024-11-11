@@ -91,25 +91,81 @@
             });
         };
         pythonEnv = poetryApplication.dependencyEnv;
+        clippy-hook = pkgs.writeScript "clippy-hook" ''
+          #!${pkgs.stdenv.shell}
+          export CARGO_HOME="${rustToolchain}/.cargo"
+          export RUSTUP_HOME="${rustToolchain}/.rustup"
+          export PATH="${rustToolchain}/bin:$PATH"
+          mkdir -p target
+          exec ${rustToolchain}/bin/cargo clippy --all-targets --all-features -- -D warnings
+        '';
+
+        pre-commit-check = pre-commit-hooks.lib.${system}.run {
+          src = ./.;
+          hooks = {
+            nixpkgs-fmt.enable = true;
+            rustfmt.enable = true;
+            ruff.enable = true;
+            clippy = {
+              enable = true;
+              entry = toString clippy-hook;
+            };
+          };
+          tools = {
+            ruff = pkgs.ruff;
+            rustfmt = rustToolchain;
+            clippy = rustToolchain;
+          };
+        };
       in
       {
         packages = {
           default = trusty;
           pyApp = poetryApplication;
         };
+
         checks = {
-          pre-commit-check = pre-commit-hooks.lib.${system}.run {
+          # primary issue was that `nix flake check` runs in a pure environment,
+          # preventing Clippy and Cargo from accessing the internet or untracked files.
+          # this caused failures when trying to fetch Git dependencies like `gbdt`.
+          # more info: https://github.com/cachix/git-hooks.nix/issues/452
+          # we replace direct pre-commit-hook with a custom mkDerivation
+
+          pre-commit-check = pkgs.stdenv.mkDerivation {
+            name = "pre-commit-check";
             src = ./.;
-            hooks = {
-              nixpkgs-fmt.enable = true;
-              rustfmt.enable = true;
-              ruff.enable = true;
-              # todo: It seems like that everyting is built offline in the checks
-              # and clippy cannot pull data from gbdt-rs git repo. 
-              # error: failed to get `gbdt` as a dependency of package `trusty v0.1.0 (/private/tmp/nix-build-pre-commit-run.drv-0/src)`
-              # clippy.enable = true;
+
+            nativeBuildInputs = [
+              pkgs.rustPlatform.cargoSetupHook
+              rustToolchain
+            ];
+
+            buildInputs = with pkgs; [
+              git
+              openssl
+              pkg-config
+              rustToolchain
+            ];
+
+            cargoDeps = pkgs.rustPlatform.importCargoLock {
+              lockFile = ./Cargo.lock;
+              outputHashes = {
+                "gbdt-0.1.3" = "sha256-f2uqulFSNGwrDM7RPdGIW11VpJRYexektXjHxTJHHmA=";
+              };
             };
-            tools = { ruff = pkgs.ruff; };
+
+            buildPhase = ''
+              export CARGO_HOME="${rustToolchain}/.cargo"
+              export RUSTUP_HOME="${rustToolchain}/.rustup"
+              export PATH="${rustToolchain}/bin:$PATH"
+              ${pre-commit-check.buildCommand}
+            '';
+
+            installPhase = ''
+              touch $out
+            '';
+
+            RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
         };
 
@@ -124,8 +180,9 @@
             pkgs.rustfmt
             pkgs.nixpkgs-fmt
           ];
-          # automatically set up git hooks
-          inherit (self.checks.${system}.pre-commit-check) shellHook;
+          shellHook = ''
+            ${pre-commit-check.shellHook}
+          '';
         };
       });
 }

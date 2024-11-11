@@ -16,11 +16,11 @@ pub enum SplitType {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[repr(C)]
 pub struct DTNode {
-    weight: f64,           // 8 bytes
-    feature_value: f64,    // 8 bytes (renamed from split_condition for clarity)
-    feature_index: i32,    // 4 bytes
-    is_leaf: bool,         // 1 byte
-    split_type: SplitType, // 1 byte
+    weight: f64,
+    feature_value: f64,
+    feature_index: i32,
+    is_leaf: bool,
+    split_type: SplitType,
 }
 
 #[derive(Clone)]
@@ -54,7 +54,7 @@ impl BinaryTreeNode {
         }
     }
 }
-// The binary tree structure
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryTree {
     nodes: Vec<BinaryTreeNode>,
@@ -565,7 +565,6 @@ impl Tree {
         new_tree.feature_offset = self.feature_offset;
 
         if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
-            // Helper function to evaluate conditions
             fn should_prune_direction(node: &DTNode, conditions: &[Condition]) -> Option<bool> {
                 // None = don't prune, Some(true) = prune left, Some(false) = prune right
                 for condition in conditions {
@@ -597,7 +596,6 @@ impl Tree {
             ) -> Option<usize> {
                 let new_node = node.value.clone();
 
-                // Check if we should prune this node
                 if !node.value.is_leaf {
                     let feature_index = feature_offset + node.value.feature_index as usize;
                     if let Some(feature_name) = feature_names.get(feature_index) {
@@ -605,7 +603,6 @@ impl Tree {
                             if let Some(prune_left) =
                                 should_prune_direction(&node.value, conditions)
                             {
-                                // Return the child we're keeping instead of pruning
                                 let child = if prune_left {
                                     old_tree.get_right_child(node)
                                 } else {
@@ -837,17 +834,41 @@ impl Trees {
         }
 
         let mut row_features = vec![0.0; num_features];
+        let num_trees = self.trees.len();
 
-        for row in 0..num_rows {
-            for (i, values) in feature_values.iter().enumerate() {
-                row_features[i] = values[row];
+        if num_trees > 100 {
+            const BATCH_SIZE: usize = 8;
+            let tree_batches = self.trees.chunks(BATCH_SIZE);
+
+            let mut scores = vec![self.base_score; num_rows];
+
+            for tree_batch in tree_batches {
+                for row in 0..num_rows {
+                    for (i, values) in feature_values.iter().enumerate() {
+                        row_features[i] = values[row];
+                    }
+
+                    for tree in tree_batch {
+                        scores[row] += tree.predict(&row_features);
+                    }
+                }
             }
 
-            let mut score = self.base_score;
-            for tree in &self.trees {
-                score += tree.predict(&row_features);
+            for score in scores {
+                builder.append_value(self.objective.compute_score(score));
             }
-            builder.append_value(self.objective.compute_score(score));
+        } else {
+            for row in 0..num_rows {
+                for (i, values) in feature_values.iter().enumerate() {
+                    row_features[i] = values[row];
+                }
+
+                let mut score = self.base_score;
+                for tree in &self.trees {
+                    score += tree.predict(&row_features);
+                }
+                builder.append_value(self.objective.compute_score(score));
+            }
         }
 
         Ok(builder.finish())
