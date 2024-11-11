@@ -31,6 +31,7 @@ pub enum Objective {
 }
 
 impl Objective {
+    #[inline(always)]
     fn compute_score(&self, leaf_weight: f64) -> f64 {
         match self {
             Objective::SquaredError => leaf_weight,
@@ -733,21 +734,23 @@ impl Trees {
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         let num_rows = batch.num_rows();
         let mut builder = Float64Builder::with_capacity(num_rows);
+        // Pre-allocate feature arrays with capacity
+        let num_features = self.feature_names.len();
+        let mut feature_values = Vec::with_capacity(num_features);
+        feature_values.resize_with(num_features, Vec::new);
+        // Pre-compute column indexes
+        let mut column_indexes = Vec::with_capacity(num_features);
+        for name in self.feature_names.iter() {
+            let idx = batch.schema().index_of(name)?;
+            column_indexes.push(idx);
+        }
 
-        let mut feature_values: Vec<Vec<f64>> = Vec::with_capacity(self.feature_names.len());
-
-        for (name, typ) in self.feature_names.iter().zip(self.feature_types.iter()) {
-            let col = batch.column_by_name(name).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!("Missing feature column: {}", name))
-            })?;
-
-            let values = match typ.as_str() {
+        for (i, typ) in self.feature_types.iter().enumerate() {
+            let col = batch.column(column_indexes[i]);
+            feature_values[i] = match typ.as_str() {
                 "float" => {
                     let array = col.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "Expected Float64Array for column: {}",
-                            name
-                        ))
+                        ArrowError::InvalidArgumentError("Expected Float64Array".into())
                     })?;
                     array.values().to_vec()
                 }
@@ -755,7 +758,7 @@ impl Trees {
                     let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError(format!(
                             "Expected Int64Array for column: {}",
-                            name
+                            self.feature_names[i]
                         ))
                     })?;
                     array.iter().map(|v| v.unwrap_or(0) as f64).collect()
@@ -764,7 +767,7 @@ impl Trees {
                     let array = col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError(format!(
                             "Expected BooleanArray for column: {}",
-                            name
+                            self.feature_names[i]
                         ))
                     })?;
                     array
@@ -779,14 +782,14 @@ impl Trees {
                     )))
                 }
             };
-            feature_values.push(values);
         }
 
-        let mut row_features = vec![0.0; self.feature_names.len()];
+        let mut row_features = vec![0.0; num_features];
 
         for row in 0..num_rows {
-            for (i, col) in feature_values.iter().enumerate() {
-                row_features[i] = col[row];
+            // Load feature values
+            for (i, values) in feature_values.iter().enumerate() {
+                row_features[i] = values[row];
             }
 
             let mut score = self.base_score;
