@@ -201,8 +201,8 @@ class DiamondsProcessor(DataProcessor):
         return pd.read_csv(self.config.data_path)
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
-        if self.config.filter_predicate:
-            df = df.query(self.config.filter_predicate)
+        # if self.config.filter_predicate:
+        #     df = df.query(self.config.filter_predicate)
 
         if self.config.sample_size:
             df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
@@ -261,8 +261,8 @@ class AirlineProcessor(DataProcessor):
         df = df.dropna()
         df.columns = df.columns.str.replace(" ", "_").str.lower().str.replace("-", "_")
 
-        if self.config.filter_predicate:
-            df = df.query(self.config.filter_predicate)
+        # if self.config.filter_predicate:
+        #     df = df.query(self.config.filter_predicate)
 
         if self.config.sample_size:
             df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
@@ -343,8 +343,8 @@ class ModelTrainer:
         params = self.objective_config.to_xgb_params(base_score)
         model = xgb.train(params, dtrain_full, self.objective_config.num_boost_rounds)
 
-        df_filtered = self.data_processor.preprocess(df)
-        X, y = self.data_processor.get_feature_target_split(df_filtered)
+        df_preprocessed = self.data_processor.preprocess(df)
+        X, y = self.data_processor.get_feature_target_split(df_preprocessed)
         X_prep, y_prep = self.prepare_data_for_objective(X, y)
         
         dtrain = xgb.DMatrix(X_prep)
@@ -353,6 +353,8 @@ class ModelTrainer:
         output_data = X_prep.copy()
         output_data['target'] = y_prep.astype('int64')
         output_data['prediction'] = predictions.astype('float64')
+        if data_config.filter_predicate:
+            output_data = output_data.query(data_config.filter_predicate)
         output_data.to_csv(paths.data_path, index=False)
 
         model.save_model(str(paths.model_path))
