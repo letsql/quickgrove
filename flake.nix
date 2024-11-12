@@ -12,7 +12,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, pre-commit-hooks, ... }:
+  outputs = { nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, pre-commit-hooks, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [
@@ -112,17 +112,13 @@
               });
             });
         };
-        processScript = pkgs.writeScriptBin "process-data" ''
+        processScript = pkgs.writeScriptBin "prepare-benchmarks" ''
           #!${pkgs.stdenv.shell}
           
-          # Create data directory if it doesn't exist
           mkdir -p data
-          
-          # Copy files from the Nix store to the working directory
           echo "Copying data files from Nix store..."
           cp -f ${dataFiles}/data/* data/
-          ${poetryApplication}/bin/trusty
-          
+          ${poetryApplication}/bin/generate-examples --data_dir data --base_dir data --generation_type benchmark
         '';
         pythonEnv = poetryApplication.dependencyEnv;
         clippy-hook = pkgs.writeScript "clippy-hook" ''

@@ -1,5 +1,6 @@
 from typing import Optional, Literal, Dict, Any, Tuple, List, Type
 from pathlib import Path
+import argparse
 import attrs
 import pandas as pd
 import xgboost as xgb
@@ -115,6 +116,7 @@ class OutputPaths:
     variant: str
     objective_name: str
     force_float64: bool
+    generation_type: GenerationType = GenerationType.BENCHMARK
     num_trees: Optional[int] = None
 
     @property
@@ -127,8 +129,8 @@ class OutputPaths:
 
     @property
     def output_base_dir(self) -> Path:
-        subdir = "tests" if "test" in str(self.base_dir) else "benches"
-        return self.base_dir / "data" / subdir
+        subdir = "tests" if "test" in str(self.generation_type) else "benches"
+        return self.base_dir / subdir
 
     @property
     def data_path(self) -> Path:
@@ -306,6 +308,7 @@ class ModelTrainer:
             variant=data_config.variant.value,
             objective_name=self.objective_config.name.value,
             force_float64=data_config.force_float64,
+            generation_type=data_config.generation_type,
             num_trees=self.objective_config.num_trees
         )
 
@@ -353,6 +356,9 @@ class ModelTrainer:
         output_data.to_csv(paths.data_path, index=False)
 
         model.save_model(str(paths.model_path))
+        print(f""" Written files to:
+        * {paths.data_path}
+        * {paths.model_path}""")
         
         metadata = ModelMetadata(
             dataset_name=data_config.name,
@@ -367,15 +373,23 @@ class ModelTrainer:
         with open(paths.metadata_path, 'w') as f:
             json.dump(attrs.asdict(metadata), f, indent=2)
 
+def arg_parse() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, default="data")
+    parser.add_argument("--generation_type", type=str, default="benchmark")
+    parser.add_argument("--base_dir", type=str, default=".")
+    return parser.parse_args()
+
 def main():
-    data_dir = Path("data")
+    args = arg_parse()
     processors: Dict[str, Type[DataProcessor]] = {
         "diamonds": DiamondsProcessor,
         "airline_satisfaction": AirlineProcessor
     }
 
-    generation_type = GenerationType.BENCHMARK
-    base_dir = Path(".")
+    generation_type = args.generation_type
+    data_dir = Path(args.data_dir)
+    base_dir = Path(args.base_dir)
     
     for objective_name in [ObjectiveType.SQUARED_ERROR]:
         for dataset_name, processor_cls in processors.items():
@@ -408,7 +422,7 @@ def main():
                             )
 
                             trainer.train_and_save(data_config)
-                            print(f"Successfully processed {dataset_name} dataset with {tree_config.num_trees} trees")
+                            print(f"✨Successfully processed {dataset_name} dataset with {tree_config.num_trees} trees\n")
 
                         except Exception as e:
                             print(f"Error processing {dataset_name} dataset: {str(e)}")

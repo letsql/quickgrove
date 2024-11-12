@@ -14,7 +14,7 @@ scikit-learn = "^1.5.2"
 attrs = "^24.2.0"
 
 [tool.poetry.scripts]
-trusty = "app.process:main"
+generate-examples = "app.generate_examples:main"
 
 [build-system]
 requires = ["poetry-core"]
