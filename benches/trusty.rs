@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
 
-const BATCHSIZE: usize = 196;
+const BATCHSIZE: usize = 192;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 

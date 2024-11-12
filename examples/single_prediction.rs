@@ -8,7 +8,7 @@ use std::io::BufReader;
 use std::sync::Arc;
 use trusty::{Condition, Predicate, Trees};
 
-const MODEL_PATH: &str = "tests/models/diamonds_model.json";
+const MODEL_PATH: &str = "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Running tree predictions example");

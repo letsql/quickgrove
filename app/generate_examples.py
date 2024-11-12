@@ -204,8 +204,8 @@ class DiamondsProcessor(DataProcessor):
         # if self.config.filter_predicate:
         #     df = df.query(self.config.filter_predicate)
 
-        if self.config.sample_size:
-            df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
+        # if self.config.sample_size:
+        #     df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
 
         df_encoded = pd.get_dummies(
             df,
@@ -355,6 +355,10 @@ class ModelTrainer:
         output_data['prediction'] = predictions.astype('float64')
         if data_config.filter_predicate:
             output_data = output_data.query(data_config.filter_predicate)
+        
+        if data_config.sample_size:
+            output_data = output_data.sample(n=min(data_config.sample_size, len(output_data)), random_state=42)
+
         output_data.to_csv(paths.data_path, index=False)
 
         model.save_model(str(paths.model_path))

@@ -1,10 +1,14 @@
-use arrow::array::ArrayRef;
+use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
+use prettytable::{format, Cell, Row, Table};
+use serde_json::Value;
 use std::error::Error;
 use std::fs::File;
+use std::io::BufReader;
 use std::sync::Arc;
+use trusty::Trees;
 
 pub fn read_diamonds_csv_to_split_batches(
     path: &str,
@@ -125,4 +129,357 @@ pub fn read_airline_csv_to_split_batches(
     }
 
     Ok((feature_batches, target_prediction_batches))
+}
+
+pub struct PredictionComparator {
+    epsilon: f64,
+}
+
+impl PredictionComparator {
+    pub fn new(epsilon: f64) -> Self {
+        Self { epsilon }
+    }
+
+    pub fn compare_predictions(
+        &self,
+        trusty_predictions: &[Float64Array],
+        expected_predictions: &[&Float64Array],
+        preprocessed_batches: &[RecordBatch],
+        expected_results: &[RecordBatch],
+    ) -> Result<(), Box<dyn Error>> {
+        for (batch_idx, ((trusty, expected), (preprocessed_batch, expected_batch))) in
+            trusty_predictions
+                .iter()
+                .zip(expected_predictions)
+                .zip(preprocessed_batches.iter().zip(expected_results))
+                .enumerate()
+        {
+            self.validate_batch_predictions(
+                batch_idx,
+                trusty,
+                expected,
+                preprocessed_batch,
+                expected_batch,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_batch_predictions(
+        &self,
+        batch_idx: usize,
+        trusty: &Float64Array,
+        expected: &Float64Array,
+        preprocessed_batch: &RecordBatch,
+        expected_batch: &RecordBatch,
+    ) -> Result<(), Box<dyn Error>> {
+        if trusty.len() != expected.len() {
+            return Err(format!(
+                "Batch {}: Prediction arrays have different lengths - trusty: {}, expected: {}",
+                batch_idx,
+                trusty.len(),
+                expected.len()
+            )
+            .into());
+        }
+
+        let differences = self.collect_differences(
+            batch_idx,
+            trusty,
+            expected,
+            preprocessed_batch,
+            expected_batch,
+        );
+
+        if !differences.is_empty() {
+            self.print_differences(batch_idx, &differences);
+            return Err(format!(
+                "Batch {}: Found {} predictions that differ by more than epsilon ({})",
+                batch_idx,
+                differences.len(),
+                self.epsilon
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    fn collect_differences(
+        &self,
+        _batch_idx: usize,
+        trusty: &Float64Array,
+        expected: &Float64Array,
+        preprocessed_batch: &RecordBatch,
+        expected_batch: &RecordBatch,
+    ) -> Vec<PredictionDifference> {
+        let mut differences = Vec::new();
+
+        for (idx, (t, e)) in trusty.iter().zip(expected.iter()).enumerate() {
+            if let (Some(t_val), Some(e_val)) = (t, e) {
+                if (t_val - e_val).abs() > self.epsilon {
+                    let feature_values =
+                        self.collect_feature_values(idx, preprocessed_batch, expected_batch);
+                    differences.push(PredictionDifference {
+                        index: idx,
+                        trusty_value: t_val,
+                        expected_value: e_val,
+                        features: feature_values,
+                    });
+                }
+            }
+        }
+
+        differences
+    }
+
+    fn collect_feature_values(
+        &self,
+        idx: usize,
+        preprocessed_batch: &RecordBatch,
+        expected_batch: &RecordBatch,
+    ) -> Vec<FeatureComparison> {
+        let mut all_columns = std::collections::HashSet::new();
+        for col_idx in 0..preprocessed_batch.num_columns() {
+            all_columns.insert(
+                preprocessed_batch
+                    .schema()
+                    .field(col_idx)
+                    .name()
+                    .to_string(),
+            );
+        }
+        for col_idx in 0..expected_batch.num_columns() {
+            all_columns.insert(expected_batch.schema().field(col_idx).name().to_string());
+        }
+
+        all_columns
+            .into_iter()
+            .map(|col_name| {
+                let preprocessed_value = preprocessed_batch
+                    .column_by_name(&col_name)
+                    .map(|col| get_value_at_index(col, idx))
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                let expected_value = expected_batch
+                    .column_by_name(&col_name)
+                    .map(|col| get_value_at_index(col, idx))
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                let col_type = preprocessed_batch
+                    .column_by_name(&col_name)
+                    .map(|col| col.data_type().to_string())
+                    .or_else(|| {
+                        expected_batch
+                            .column_by_name(&col_name)
+                            .map(|col| col.data_type().to_string())
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                FeatureComparison {
+                    name: col_name,
+                    preprocessed_value,
+                    expected_value,
+                    feature_type: col_type,
+                }
+            })
+            .collect()
+    }
+
+    fn print_differences(&self, batch_idx: usize, differences: &[PredictionDifference]) {
+        println!("\nBatch {} - Failed Predictions:", batch_idx);
+
+        for difference in differences {
+            let mut table = Table::new();
+            table.set_format(*format::consts::FORMAT_BOX_CHARS);
+
+            difference.print_to_table(&mut table);
+            table.printstd();
+            println!("\n");
+        }
+    }
+}
+
+struct PredictionDifference {
+    index: usize,
+    trusty_value: f64,
+    expected_value: f64,
+    features: Vec<FeatureComparison>,
+}
+
+impl PredictionDifference {
+    fn print_to_table(&self, table: &mut Table) {
+        table.add_row(Row::new(vec![
+            Cell::new("Index"),
+            Cell::new(&self.index.to_string()),
+            Cell::new(""),
+            Cell::new("Type"),
+        ]));
+        table.add_row(Row::new(vec![
+            Cell::new("Trusty Prediction"),
+            Cell::new(&format!("{:.6}", self.trusty_value)),
+            Cell::new(""),
+            Cell::new("Float64"),
+        ]));
+        table.add_row(Row::new(vec![
+            Cell::new("Expected Prediction"),
+            Cell::new(&format!("{:.6}", self.expected_value)),
+            Cell::new(""),
+            Cell::new("Float64"),
+        ]));
+        table.add_row(Row::new(vec![
+            Cell::new("Difference"),
+            Cell::new(&format!(
+                "{:.6}",
+                (self.trusty_value - self.expected_value).abs()
+            )),
+            Cell::new(""),
+            Cell::new(""),
+        ]));
+
+        table.add_row(Row::new(vec![
+            Cell::new("Feature"),
+            Cell::new("Original Value"),
+            Cell::new("Test Value"),
+            Cell::new("Type"),
+        ]));
+
+        for feature in &self.features {
+            feature.print_to_table(table);
+        }
+    }
+}
+
+struct FeatureComparison {
+    name: String,
+    preprocessed_value: String,
+    expected_value: String,
+    feature_type: String,
+}
+
+impl FeatureComparison {
+    fn print_to_table(&self, table: &mut Table) {
+        table.add_row(Row::new(vec![
+            Cell::new(&self.name),
+            Cell::new(&self.preprocessed_value),
+            Cell::new(&self.expected_value),
+            Cell::new(&self.feature_type),
+        ]));
+    }
+}
+
+fn get_value_at_index(array: &ArrayRef, idx: usize) -> String {
+    if array.is_null(idx) {
+        return "null".to_string();
+    }
+
+    if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
+        return format!("{:.6}", float_array.value(idx));
+    }
+
+    if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
+        return bool_array.value(idx).to_string();
+    }
+
+    if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
+        return int_array.value(idx).to_string();
+    }
+
+    format!("unsupported type: {}", array.data_type())
+}
+pub struct ModelTester {
+    epsilon: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DatasetType {
+    Diamonds,
+    Airline,
+}
+
+impl ModelTester {
+    pub fn new(epsilon: f64) -> Self {
+        Self { epsilon }
+    }
+
+    pub fn test_model(
+        &self,
+        model_path: &str,
+        test_data_path: &str,
+        batch_size: usize,
+        dataset_type: DatasetType,
+    ) -> Result<(), Box<dyn Error>> {
+        let trees = self.load_model(model_path)?;
+        let (preprocessed_batches, expected_results) =
+            self.load_dataset(test_data_path, batch_size, dataset_type)?;
+
+        let expected_predictions = self.extract_expected_predictions(&expected_results)?;
+        let trusty_predictions = self.generate_predictions(&trees, &preprocessed_batches)?;
+
+        let comparator = PredictionComparator::new(self.epsilon);
+        comparator.compare_predictions(
+            &trusty_predictions,
+            &expected_predictions,
+            &preprocessed_batches,
+            &expected_results,
+        )?;
+
+        println!("All predictions match!");
+        Ok(())
+    }
+
+    pub fn load_dataset(
+        &self,
+        data_path: &str,
+        batch_size: usize,
+        dataset_type: DatasetType,
+    ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
+        match dataset_type {
+            DatasetType::Diamonds => read_diamonds_csv_to_split_batches(data_path, batch_size),
+            DatasetType::Airline => read_airline_csv_to_split_batches(data_path, batch_size),
+        }
+    }
+
+    pub fn load_model(&self, model_path: &str) -> Result<Trees, Box<dyn Error>> {
+        let model_file =
+            File::open(model_path).map_err(|e| format!("Failed to open model file: {}", e))?;
+        let reader = BufReader::new(model_file);
+        let model_data: Value =
+            serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        Ok(Trees::load(&model_data)?)
+    }
+
+    pub fn extract_expected_predictions<'a>(
+        &self,
+        expected_results: &'a [RecordBatch],
+    ) -> Result<Vec<&'a Float64Array>, Box<dyn Error>> {
+        expected_results
+            .iter()
+            .map(|batch| {
+                batch
+                    .column_by_name("prediction")
+                    .ok_or_else(|| "Column 'prediction' not found".into())
+                    .and_then(|col| {
+                        col.as_any()
+                            .downcast_ref::<Float64Array>()
+                            .ok_or_else(|| "Failed to downcast to Float64Array".into())
+                    })
+            })
+            .collect()
+    }
+
+    fn generate_predictions(
+        &self,
+        trees: &Trees,
+        preprocessed_batches: &[RecordBatch],
+    ) -> Result<Vec<Float64Array>, Box<dyn Error>> {
+        preprocessed_batches
+            .iter()
+            .map(|batch| {
+                trees
+                    .predict_batch(batch)
+                    .map_err(|e| Box::new(e) as Box<dyn Error>)
+            })
+            .collect()
+    }
 }
