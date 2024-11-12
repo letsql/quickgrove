@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use trusty::{Condition, Predicate, Trees};
 
-const BATCHSIZE: usize = 256;
+const BATCHSIZE: usize = 196;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -396,7 +396,7 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
     let trees =
         load_model("data/benches/reg:squarederror/models/diamonds_model_trees_100_mixed.json")?;
     let (data_batches, _) = data_loader::load_diamonds_dataset(
-        "data/benches/reg:squarederror/data/diamonds_data_filtered_mixed.csv",
+        "data/benches/reg:squarederror/data/diamonds_data_full_mixed.csv",
         BATCHSIZE,
         false,
     )?;
@@ -461,12 +461,13 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
 
 fn benchmark_airline_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
-    let trees =
-        load_model("data/benches/reg:squarederror/models/airline_model_trees_500_mixed.json")?;
+    let trees = load_model(
+        "data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_mixed.json",
+    )?;
     let (data_batches, _) = data_loader::load_airline_dataset(
         "data/benches/reg:squarederror/data/airline_satisfaction_data_filtered_mixed.csv",
         BATCHSIZE,
-        true,
+        false,
     )?;
     let predicate = {
         let mut pred = Predicate::new();
@@ -531,13 +532,13 @@ fn benchmark_implementations(c: &mut Criterion) {
             total_rows
         );
 
-        c.bench_function("trusty/diamonds", |b| {
+        c.bench_function("trusty/diamonds/float64", |b| {
             b.to_async(&rt)
                 .iter(|| async { predict_batch(&trees, &batches).unwrap() })
         });
     }
     {
-        let trees = load_model("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_500_float64.json")
+        let trees = load_model("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
             .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_airline_dataset(
             "data/benches/reg:squarederror/data/airline_satisfaction_data_full_float64.csv",
@@ -557,14 +558,14 @@ fn benchmark_implementations(c: &mut Criterion) {
             total_rows
         );
 
-        c.bench_function("trusty/airline", |b| {
+        c.bench_function("trusty/airline/float64", |b| {
             b.to_async(&rt)
                 .iter(|| async { predict_batch(&trees, &batches).unwrap() })
         });
     }
 
     {
-        let model = GBDT::from_xgboost_json_used_feature("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_500_float64.json")
+        let model = GBDT::from_xgboost_json_used_feature("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
             .expect("Failed to load airline model");
         let (batches, _) = data_loader::load_airline_dataset(
             "data/benches/reg:squarederror/data/airline_satisfaction_data_full_float64.csv",
@@ -602,7 +603,6 @@ fn benchmark_implementations(c: &mut Criterion) {
         )
         .expect("Failed to load diamonds data");
 
-        // Validate GBDT predictions for diamonds
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         let gbdt_predictions = predict_batch_with_gbdt(&model, &batches)
             .expect("Failed to generate GBDT predictions for diamonds");
