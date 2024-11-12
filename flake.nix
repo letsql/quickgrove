@@ -25,7 +25,6 @@
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-        src = craneLib.cleanCargoSource ./.;
 
         allowedExtensions = [
           "csv"
@@ -44,14 +43,19 @@
             isAllowed = type == "regular" && hasAllowedExtension path;
           in
           isCargoSource || isAllowed;
-
+        cargoDeps = pkgs.rustPlatform.importCargoLock {
+          lockFile = ./Cargo.lock;
+          outputHashes = {
+            "gbdt-0.1.3" = "sha256-f2uqulFSNGwrDM7RPdGIW11VpJRYexektXjHxTJHHmA=";
+          };
+        };
         commonArgs = {
+          inherit cargoDeps;
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             filter = customFilter;
           };
           strictDeps = true;
-          CARGO_NET_OFFLINE = "false";
           buildInputs = with pkgs; [
             openssl
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
@@ -69,6 +73,24 @@
         trusty = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
         });
+
+        datasets = {
+          diamonds = pkgs.fetchurl {
+            url = "https://raw.githubusercontent.com/tidyverse/ggplot2/master/data-raw/diamonds.csv";
+            sha256 = "sha256-lXRzCwOrokHYmcSpdRHFBhsZNY+riVEHdPtsJBaDRcQ=";
+          };
+
+          airline = pkgs.fetchurl {
+            url = "https://raw.githubusercontent.com/varundixit4/Airline-Passenger-Satisfaction-Report/refs/heads/main/airline_satisfaction.csv";
+            sha256 = "sha256-oV+rbTamEj3tsDXhvBGzHye1R2cc6NJ3YudNllJ8Nk8=";
+          };
+        };
+
+        dataFiles = pkgs.runCommand "trusty-data-files" { } ''
+          mkdir -p $out/data
+          ln -s ${datasets.diamonds} $out/data/diamonds.csv
+          ln -s ${datasets.airline} $out/data/airline_satisfaction.csv
+        '';
 
         poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
           projectDir = ./.;
@@ -90,11 +112,23 @@
               });
             });
         };
+        processScript = pkgs.writeScriptBin "process-data" ''
+          #!${pkgs.stdenv.shell}
+          
+          # Create data directory if it doesn't exist
+          mkdir -p data
+          
+          # Copy files from the Nix store to the working directory
+          echo "Copying data files from Nix store..."
+          cp -f ${dataFiles}/data/* data/
+          ${poetryApplication}/bin/trusty
+          
+        '';
         pythonEnv = poetryApplication.dependencyEnv;
         clippy-hook = pkgs.writeScript "clippy-hook" ''
           #!${pkgs.stdenv.shell}
-          export CARGO_HOME="${rustToolchain}/.cargo"
-          export RUSTUP_HOME="${rustToolchain}/.rustup"
+          export CARGO_HOME="$PWD/.cargo"
+          export RUSTUP_HOME="$PWD/.rustup"
           export PATH="${rustToolchain}/bin:$PATH"
           mkdir -p target
           exec ${rustToolchain}/bin/cargo clippy --all-targets --all-features -- -D warnings
@@ -122,6 +156,7 @@
         packages = {
           default = trusty;
           pyApp = poetryApplication;
+          data = dataFiles;
         };
 
         checks = {
@@ -155,8 +190,8 @@
             };
 
             buildPhase = ''
-              export CARGO_HOME="${rustToolchain}/.cargo"
-              export RUSTUP_HOME="${rustToolchain}/.rustup"
+              export CARGO_HOME="$PWD/.cargo"
+              export RUSTUP_HOME="$PWD/.rustup"
               export PATH="${rustToolchain}/bin:$PATH"
               ${pre-commit-check.buildCommand}
             '';
@@ -179,6 +214,7 @@
             pkgs.ruff
             pkgs.rustfmt
             pkgs.nixpkgs-fmt
+            processScript
           ];
           shellHook = ''
             ${pre-commit-check.shellHook}

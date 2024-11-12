@@ -393,9 +393,13 @@ mod data_loader {
 
 fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
-    let trees = load_model("tests/models/diamonds_model.json")?;
-    let (data_batches, _) =
-        data_loader::load_diamonds_dataset("tests/data/diamonds_full.csv", BATCHSIZE, false)?;
+    let trees =
+        load_model("data/benches/reg:squarederror/models/diamonds_model_trees_100_mixed.json")?;
+    let (data_batches, _) = data_loader::load_diamonds_dataset(
+        "data/benches/reg:squarederror/data/diamonds_data_filtered_mixed.csv",
+        BATCHSIZE,
+        false,
+    )?;
     let baseline_predictions = predict_batch(&trees, &data_batches)?;
     let total_rows: usize = data_batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(
@@ -457,9 +461,10 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
 
 fn benchmark_airline_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
-    let trees = load_model("tests/models/airline_model_float64.json")?;
+    let trees =
+        load_model("data/benches/reg:squarederror/models/airline_model_trees_500_mixed.json")?;
     let (data_batches, _) = data_loader::load_airline_dataset(
-        "tests/data/airline_filtered_float64.csv",
+        "data/benches/reg:squarederror/data/airline_satisfaction_data_filtered_mixed.csv",
         BATCHSIZE,
         true,
     )?;
@@ -504,10 +509,12 @@ fn benchmark_implementations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
     {
-        let trees = load_model("tests/models/diamonds_model_float64.json")
-            .expect("Failed to load diamonds model");
+        let trees = load_model(
+            "data/benches/reg:squarederror/models/diamonds_model_trees_100_float64.json",
+        )
+        .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "tests/data/diamonds_full_float64.csv",
+            "data/benches/reg:squarederror/data/diamonds_data_full_float64.csv",
             BATCHSIZE,
             true,
         )
@@ -529,12 +536,38 @@ fn benchmark_implementations(c: &mut Criterion) {
                 .iter(|| async { predict_batch(&trees, &batches).unwrap() })
         });
     }
+    {
+        let trees = load_model("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_500_float64.json")
+            .expect("Failed to load diamonds model");
+        let (batches, _) = data_loader::load_airline_dataset(
+            "data/benches/reg:squarederror/data/airline_satisfaction_data_full_float64.csv",
+            BATCHSIZE,
+            true,
+        )
+        .expect("Failed to load diamonds data");
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let trusty_predictions = predict_batch(&trees, &batches)
+            .expect("Failed to generate trusty predictions for diamonds");
+        assert_eq!(
+            trusty_predictions.len(),
+            total_rows,
+            "Trusty diamonds predictions length {} doesn't match total rows {}",
+            trusty_predictions.len(),
+            total_rows
+        );
+
+        c.bench_function("trusty/airline", |b| {
+            b.to_async(&rt)
+                .iter(|| async { predict_batch(&trees, &batches).unwrap() })
+        });
+    }
 
     {
-        let model = GBDT::from_xgboost_json_used_feature("tests/models/airline_model_float64.json")
+        let model = GBDT::from_xgboost_json_used_feature("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_500_float64.json")
             .expect("Failed to load airline model");
         let (batches, _) = data_loader::load_airline_dataset(
-            "tests/data/airline_filtered_float64.csv",
+            "data/benches/reg:squarederror/data/airline_satisfaction_data_full_float64.csv",
             BATCHSIZE,
             true,
         )
@@ -558,11 +591,12 @@ fn benchmark_implementations(c: &mut Criterion) {
     }
 
     {
-        let model =
-            GBDT::from_xgboost_json_used_feature("tests/models/diamonds_model_float64.json")
-                .expect("Failed to load diamonds model");
+        let model = GBDT::from_xgboost_json_used_feature(
+            "data/benches/reg:squarederror/models/diamonds_model_trees_100_float64.json",
+        )
+        .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "tests/data/diamonds_full_float64.csv",
+            "data/benches/reg:squarederror/data/diamonds_data_full_float64.csv",
             BATCHSIZE,
             true,
         )
