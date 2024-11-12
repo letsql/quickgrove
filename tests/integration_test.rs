@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn test_model_results() -> Result<(), Box<dyn Error>> {
         let model_file =
-            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
+            File::open("tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json")
                 .map_err(|e| format!("Failed to open model file: {}", e))?;
 
         let reader = BufReader::new(model_file);
@@ -51,7 +51,7 @@ mod tests {
         let trees = Trees::load(&model_data)?;
 
         let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
-            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
+            "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv",
             1024,
         )?;
 
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn test_pruned_trees_prediction_output() -> Result<(), Box<dyn Error>> {
         let model_file =
-            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
+            File::open("tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json")
                 .map_err(|e| format!("Failed to open model file: {}", e))?;
         let reader = BufReader::new(model_file);
         let model_data: Value =
@@ -106,7 +106,7 @@ mod tests {
         let pruned_trees = trees.prune(&predicate);
 
         let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
-            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
+            "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv",
             1024,
         )?;
 
@@ -170,7 +170,6 @@ mod tests {
                                 );
                             }
 
-                            // For each column name, get values from both batches if they exist
                             for col_name in all_columns {
                                 let preprocessed_value = preprocessed_batch
                                     .column_by_name(&col_name)
@@ -279,67 +278,11 @@ mod tests {
     }
 
     #[test]
-    fn test_pruned_trees_prediction() -> Result<(), Box<dyn Error>> {
-        let model_file =
-            File::open("tests/models/reg:squarederror/diamonds_model_trees_10_mixed.json")
-                .map_err(|e| format!("Failed to open model file: {}", e))?;
-
-        let reader = BufReader::new(model_file);
-        let model_data: Value =
-            serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-        let trees = Trees::load(&model_data)?;
-
-        let mut predicate = Predicate::new();
-        predicate.add_condition("carat".to_string(), Condition::LessThan(0.30));
-
-        let pruned_trees = trees.prune(&predicate);
-
-        let (preprocessed_batches, expected_results) = read_diamonds_csv_to_split_batches(
-            "tests/data/reg:squarederror/diamonds_data_filtered_mixed.csv",
-            1024,
-        )?;
-
-        let expected_predictions: Vec<&Float64Array> = expected_results
-            .iter()
-            .map(|batch| {
-                batch
-                    .column_by_name("prediction")
-                    .expect("Column 'prediction' not found")
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .expect("Failed to downcast to Float64Array")
-            })
-            .collect();
-
-        let trusty_predictions: Vec<Float64Array> = preprocessed_batches
-            .iter()
-            .map(|batch| pruned_trees.predict_batch(batch).unwrap())
-            .collect();
-
-        for (trusty, expected) in trusty_predictions.iter().zip(expected_predictions.iter()) {
-            assert_eq!(
-                trusty.len(),
-                expected.len(),
-                "Prediction arrays have different lengths"
-            );
-
-            for (t, e) in trusty.iter().zip(expected.iter()) {
-                if let (Some(t_val), Some(e_val)) = (t, e) {
-                    assert_abs_diff_eq!(t_val, e_val, epsilon = 1e-1);
-                } else {
-                    panic!("Encountered None value in predictions");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
     fn test_model_results_airline() -> Result<(), Box<dyn Error>> {
-        let model_file =
-            File::open("tests/models/reg:squarederror/airline_model_trees_10_mixed.json")
-                .map_err(|e| format!("Failed to open model file: {}", e))?;
+        let model_file = File::open(
+            "tests/models/reg:squarederror/airline_satisfaction_model_trees_100_mixed.json",
+        )
+        .map_err(|e| format!("Failed to open model file: {}", e))?;
 
         let reader = BufReader::new(model_file);
         let model_data: Value =
@@ -348,7 +291,7 @@ mod tests {
         let trees = Trees::load(&model_data)?;
 
         let (preprocessed_batches, expected_results) = read_airline_csv_to_split_batches(
-            "tests/data/reg:squarederror/airline_data_filtered_mixed.csv",
+            "tests/data/reg:squarederror/airline_satisfaction_data_filtered_trees_100_mixed.csv",
             1024,
         )?;
 

@@ -1,0 +1,5 @@
+carat,depth,table,x,y,z,cut_good,cut_ideal,cut_premium,cut_very_good,color_e,color_f,color_g,color_h,color_i,color_j,clarity_if,clarity_si1,clarity_si2,clarity_vs1,clarity_vs2,clarity_vvs1,clarity_vvs2,target,prediction
+0.24,62.1,56.0,3.97,4.0,2.47,False,True,False,False,False,False,True,False,False,False,False,False,False,False,False,True,False,559,2075.62744140625
+0.23,61.8,55.0,3.93,3.96,2.43,False,True,False,False,False,True,False,False,False,False,False,False,False,False,True,False,False,493,2075.62744140625
+0.28,60.1,59.0,4.22,4.26,2.55,False,False,True,False,True,False,False,False,False,False,False,False,False,False,False,False,True,646,2075.62744140625
+0.23,61.1,60.0,3.95,4.01,2.43,False,False,False,True,True,False,False,False,False,False,False,False,False,False,False,True,False,530,2075.62744140625

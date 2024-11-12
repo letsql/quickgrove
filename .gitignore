@@ -4,5 +4,3 @@ result
 target
 .envrc.anthropic
 .pre-commit-config.yaml
-data/
-

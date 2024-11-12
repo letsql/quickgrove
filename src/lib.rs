@@ -834,7 +834,7 @@ impl Trees {
         let mut row_features = vec![0.0; num_features];
         let num_trees = self.trees.len();
 
-        if num_trees > 100 {
+        if num_trees >= 100 {
             const BATCH_SIZE: usize = 8; // This should probably depend on the Tree depth and
                                          // number of nodes
             let tree_batches = self.trees.chunks(BATCH_SIZE);

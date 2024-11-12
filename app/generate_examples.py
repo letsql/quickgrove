@@ -58,7 +58,7 @@ class TreeConfig:
     @classmethod
     def get_configs(cls, generation_type: GenerationType) -> List["TreeConfig"]:
         if generation_type == GenerationType.TEST:
-            return [cls(num_trees=10, allowed_datasets=["diamonds", "airline_satisfaction"])]
+            return [cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"])]
         return [
             cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"]),
             cls(num_trees=500, allowed_datasets=["airline_satisfaction"]),
@@ -121,7 +121,7 @@ class OutputPaths:
 
     @property
     def data_suffix(self) -> str:
-        return f"{self.variant}_{'float64' if self.force_float64 else 'mixed'}"
+        return f"{self.variant}_trees_{self.num_trees}_{'float64' if self.force_float64 else 'mixed'}"
 
     @property
     def model_suffix(self) -> str:
