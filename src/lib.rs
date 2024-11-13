@@ -23,7 +23,7 @@ pub struct DTNode {
     split_type: SplitType,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Objective {
     SquaredError,
 }
@@ -694,11 +694,12 @@ impl Default for Tree {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Trees {
     pub trees: Vec<Tree>,
     pub feature_names: Arc<Vec<String>>,
     pub base_score: f64,
-    feature_types: Arc<Vec<String>>,
+    pub feature_types: Arc<Vec<String>>,
     objective: Objective,
 }
 

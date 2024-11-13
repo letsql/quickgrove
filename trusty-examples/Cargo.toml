@@ -1,0 +1,23 @@
+[package]
+name = "examples"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "datafusion_udf"
+path = "datafusion_udf.rs"
+
+[[bin]]
+name = "single_prediction"
+path = "single_prediction.rs"
+
+[dependencies]
+arrow = "53.1.0"
+serde_json = "1.0"
+datafusion = { version = "43.0.0" }
+datafusion-common = "43.0.0"
+datafusion-expr = "43.0.0"
+datafusion-physical-expr = "43.0.0"
+datafusion-sql = "43.0.0"
+trusty = { path = ".." }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

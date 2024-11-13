@@ -86,6 +86,17 @@
           };
         };
 
+        datafusion-udf = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          cargoExtraArgs = "--package examples --bin datafusion_udf";
+          doCheck = false;
+        });
+
+        datafusion-udf-wrapper = pkgs.writeScriptBin "datafusion-udf" ''
+          #!${pkgs.stdenv.shell}
+          exec ${datafusion-udf}/bin/datafusion_udf "$@"
+        '';
+
         dataFiles = pkgs.runCommand "trusty-data-files" { } ''
           mkdir -p $out/data
           ln -s ${datasets.diamonds} $out/data/diamonds.csv
@@ -150,9 +161,11 @@
       in
       {
         packages = {
-          default = trusty;
+          trusty = trusty;
           pyApp = poetryApplication;
           data = dataFiles;
+          datafusion-udf-example = datafusion-udf-wrapper;
+          default = datafusion-udf-wrapper;
         };
 
         checks = {
