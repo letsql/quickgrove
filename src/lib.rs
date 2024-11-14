@@ -1,5 +1,8 @@
-use arrow::array::{Array, BooleanArray, Float64Array, Float64Builder, Int64Array};
+use arrow::array::{
+    Array, ArrayRef, AsArray, BooleanArray, Float64Array, Float64Builder, Int64Array,
+};
 use arrow::compute::{max, min};
+use arrow::datatypes::{DataType, Float64Type};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -40,8 +43,8 @@ impl Objective {
 pub struct BinaryTreeNode {
     pub value: DTNode,
     index: usize,
-    left: usize,  // 0 means no child
-    right: usize, // 0 means no child
+    left: usize,
+    right: usize,
 }
 
 impl BinaryTreeNode {
@@ -507,6 +510,24 @@ impl Tree {
         }
     }
 
+    #[inline(always)]
+    pub fn predict_arrays(
+        &self,
+        feature_arrays: &[&dyn Array],
+    ) -> Result<Float64Array, ArrowError> {
+        let num_rows = feature_arrays[0].len();
+        let mut builder = Float64Builder::with_capacity(num_rows);
+        let mut row_features = vec![0.0; feature_arrays.len()];
+
+        for row in 0..num_rows {
+            for (i, array) in feature_arrays.iter().enumerate() {
+                row_features[i] = array.as_primitive::<Float64Type>().value(row);
+            }
+            builder.append_value(self.predict(&row_features));
+        }
+        Ok(builder.finish())
+    }
+
     fn depth(&self) -> usize {
         fn recursive_depth(tree: &BinaryTree, node: &BinaryTreeNode) -> usize {
             if node.value.is_leaf {
@@ -779,55 +800,53 @@ impl Trees {
             objective,
         })
     }
+
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
-        let num_rows = batch.num_rows();
+        self.predict_arrays(batch.columns())
+    }
+
+    pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float64Array, ArrowError> {
+        let num_rows = feature_arrays[0].len();
+        let num_features = feature_arrays.len();
         let mut builder = Float64Builder::with_capacity(num_rows);
 
-        let num_features = self.feature_names.len();
         let mut feature_values = Vec::with_capacity(num_features);
         feature_values.resize_with(num_features, Vec::new);
 
-        let mut column_indexes = Vec::with_capacity(num_features);
-        for name in self.feature_names.iter() {
-            let idx = batch.schema().index_of(name)?;
-            column_indexes.push(idx);
-        }
-
-        for (i, typ) in self.feature_types.iter().enumerate() {
-            let col = batch.column(column_indexes[i]);
-            feature_values[i] = match typ.as_str() {
-                "float" => {
-                    let array = col.as_any().downcast_ref::<Float64Array>().ok_or_else(|| {
-                        ArrowError::InvalidArgumentError("Expected Float64Array".into())
-                    })?;
+        for (i, array) in feature_arrays.iter().enumerate() {
+            feature_values[i] = match array.data_type() {
+                DataType::Float64 => {
+                    let array = array
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .ok_or_else(|| {
+                            ArrowError::InvalidArgumentError("Expected Float64Array".into())
+                        })?;
                     array.values().to_vec()
                 }
-                "int" => {
-                    let array = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "Expected Int64Array for column: {}",
-                            self.feature_names[i]
-                        ))
+                DataType::Int64 => {
+                    let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                        ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
-                    array.iter().map(|v| v.unwrap_or(0) as f64).collect()
+                    array.values().iter().map(|&x| x as f64).collect()
                 }
-                "i" => {
-                    let array = col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "Expected BooleanArray for column: {}",
-                            self.feature_names[i]
-                        ))
-                    })?;
+                DataType::Boolean => {
+                    let array = array
+                        .as_any()
+                        .downcast_ref::<BooleanArray>()
+                        .ok_or_else(|| {
+                            ArrowError::InvalidArgumentError("Expected BooleanArray".into())
+                        })?;
                     array
+                        .values()
                         .iter()
-                        .map(|v| if v.unwrap_or(false) { 1.0 } else { 0.0 })
+                        .map(|x| if x { 1.0 } else { 0.0 })
                         .collect()
                 }
                 _ => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "Unsupported feature type: {}",
-                        typ
-                    )))
+                    return Err(ArrowError::InvalidArgumentError(
+                        "Unsupported feature type".into(),
+                    ))?;
                 }
             };
         }
@@ -836,10 +855,8 @@ impl Trees {
         let num_trees = self.trees.len();
 
         if num_trees >= 100 {
-            const BATCH_SIZE: usize = 8; // This should probably depend on the Tree depth and
-                                         // number of nodes
+            const BATCH_SIZE: usize = 8;
             let tree_batches = self.trees.chunks(BATCH_SIZE);
-
             let mut scores = vec![self.base_score; num_rows];
 
             for tree_batch in tree_batches {
@@ -1269,7 +1286,7 @@ mod tests {
         };
 
         let mut predicate = Predicate::new();
-        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.50));
 
         let pruned_trees = trees.prune(&predicate);
         assert_eq!(pruned_trees.trees.len(), 2);
@@ -1289,10 +1306,34 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(tree.predict(&[0.3, 0.0]), -1.0); // x < 0.5 path
-        assert_eq!(tree.predict(&[0.7, 0.0]), 1.0); // 0.5 <= x < 1.0 path
-        assert_eq!(tree.predict(&[1.5, 0.0]), 2.0); // x >= 1.0 path
+        assert_eq!(tree.predict(&[0.3, 0.0]), -1.0);
+        assert_eq!(tree.predict(&[0.7, 0.0]), 1.0);
+        assert_eq!(tree.predict(&[1.5, 0.0]), 2.0);
 
         assert_eq!(pruned_tree.predict(&[0.3, 0.0]), -1.0);
+    }
+
+    #[test]
+    fn test_tree_predict_arrays() {
+        let tree = create_sample_tree();
+
+        let mut builder = Float64Builder::new();
+        builder.append_value(0.3); // left: -1.0
+        builder.append_value(0.7); // right: 1.0
+        builder.append_value(0.5); // right: 1.0
+        builder.append_value(0.0); // left: -1.0
+        builder.append_null(); // default left: -1.0
+        let array = Arc::new(builder.finish());
+        let array_ref: &dyn Array = array.as_ref();
+
+        let predictions = tree.predict_arrays(&[array_ref]).unwrap();
+
+        assert_eq!(predictions.len(), 5);
+        assert_eq!(predictions.value(0), -1.0); // 0.3 < 0.5 -> left
+        assert_eq!(predictions.value(1), 1.0); // 0.7 >= 0.5 -> right
+        assert_eq!(predictions.value(2), 1.0); // 0.5 >= 0.5 -> right
+        assert_eq!(predictions.value(3), -1.0); // 0.0 < 0.5 -> left
+        assert_eq!(predictions.value(4), -1.0); // default left (this needs to be fixed since
+                                                // default values should come from default_true array in the model json)
     }
 }

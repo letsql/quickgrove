@@ -88,28 +88,7 @@ impl ScalarUDFImpl for TrustyUDF {
             })
             .collect::<DataFusionResult<Vec<_>>>()?;
 
-        let fields: Vec<Field> = self
-            .trees
-            .feature_names
-            .iter()
-            .zip(self.trees.feature_types.iter())
-            .map(|(name, typ)| {
-                Field::new(
-                    name,
-                    match typ.as_str() {
-                        "float" => DataType::Float64,
-                        "int" => DataType::Int64,
-                        "i" => DataType::Boolean,
-                        _ => unreachable!(),
-                    },
-                    true,
-                )
-            })
-            .collect();
-
-        let schema = Arc::new(Schema::new(fields));
-        let batch = RecordBatch::try_new(schema, arrays)?;
-        let predictions = self.trees.predict_batch(&batch)?;
+        let predictions = self.trees.predict_arrays(&arrays)?;
         Ok(ColumnarValue::Array(Arc::new(predictions)))
     }
 }
