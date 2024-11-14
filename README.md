@@ -11,15 +11,14 @@ A zero-copy, Arrow-native inference engine for tree-based models, designed for s
 
 - **Zero-Copy Inference**: Direct operations on Arrow columnar buffers
 - **Model Pruning**: Runtime optimization via predicate-based tree pruning
-- **Batch Processing**: Efficient processing on `RecordBatch` 
-- **DataFusion Integration**: Native UDF support (experimental)
-- **Smart Memory Management**: Efficient handling of large model structures
+- **Batched Trees**: Efficient processing with large tree batching (>100)
+- **Mixed Types**: Support Boolean, Int64 and Float64 data types along with missing values
+- **Model IO**: XGBoost Json Schema support for model loading
 
 ## Installation
 
-```toml
-[dependencies]
-trusty = "0.1.0"
+```
+nix develop
 ```
 
 ## Usage Examples
@@ -69,16 +68,10 @@ let optimized_model = model.auto_prune(&batch, &feature_names)?;
 println!("{}", tree);
 ```
 
-## Technical Foundation
-
-- **Memory Model**: Zero-copy operations on Arrow memory
-- **Type System**: Leverages Rust's type system for compile-time guarantees
-- **Execution Model**: Vectorized operations for batch processing
-- **Integration Layer**: Native Apache Arrow RecordBatch interface
-
 ## Development Roadmap
 
 ### Model Support
+
 - [x] XGBoost reg:squarederror
 - [ ] XGBoost reg:logistic
 - [ ] XGBoost binary:logistic
@@ -96,9 +89,7 @@ println!("{}", tree);
 
 ## Contributing
 
-Contributions welcome. Please review open issues and submit PRs with:
-- Comprehensive test coverage
-- Documentation updates
+Contributions welcome. Please review open issues and submit PRs.
 
 ## License
 
