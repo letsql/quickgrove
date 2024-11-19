@@ -8,6 +8,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
+use trusty::loader::ModelLoader;
 use trusty::GradientBoostedDecisionTrees;
 
 pub fn read_diamonds_csv_to_split_batches(
@@ -444,12 +445,9 @@ impl ModelTester {
         &self,
         model_path: &str,
     ) -> Result<GradientBoostedDecisionTrees, Box<dyn Error>> {
-        let model_file =
-            File::open(model_path).map_err(|e| format!("Failed to open model file: {}", e))?;
-        let reader = BufReader::new(model_file);
-        let model_data: Value =
-            serde_json::from_reader(reader).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-        Ok(GradientBoostedDecisionTrees::load(&model_data)?)
+        let model_data: Value = serde_json::from_reader(BufReader::new(File::open(model_path)?))?;
+
+        Ok(GradientBoostedDecisionTrees::load_from_json(&model_data)?)
     }
 
     pub fn extract_expected_predictions<'a>(

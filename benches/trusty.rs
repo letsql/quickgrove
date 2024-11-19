@@ -15,6 +15,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use trusty::loader::ModelLoader;
 use trusty::predicates::{Condition, Predicate};
 use trusty::tree::GradientBoostedDecisionTrees;
 
@@ -629,7 +630,7 @@ fn load_model(path: &str) -> Result<GradientBoostedDecisionTrees> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let model_data: Value = serde_json::from_reader(reader)?;
-    Ok(GradientBoostedDecisionTrees::load(&model_data)?)
+    Ok(GradientBoostedDecisionTrees::load_from_json(&model_data)?)
 }
 
 criterion_group! {

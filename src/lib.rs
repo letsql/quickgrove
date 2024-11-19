@@ -1,3 +1,4 @@
+pub mod loader;
 pub mod objective;
 pub mod predicates;
 pub mod tree;
@@ -14,6 +15,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use std::sync::Arc;
+
     fn create_sample_tree() -> FeatureTree {
         let feature_names = vec!["feature0".to_string()];
         let feature_types = vec!["float".to_string()];

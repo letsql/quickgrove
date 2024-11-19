@@ -8,24 +8,26 @@ use serde_json::Value;
 use std::any::Any;
 use std::error::Error;
 use std::sync::Arc;
-use trusty::Trees;
+use trusty::loader::ModelLoader;
+use trusty::GradientBoostedDecisionTrees;
 
 const MODEL_JSON: &str = r#"{
     "learner": {
         "feature_names": ["feature0", "feature1"],
         "feature_types": ["float", "float"],
+        "objective": {"name": "reg:squarederror"},
         "learner_model_param": {
             "base_score": "0.5",
-            "objective": "reg:squarederror"
+            "objective": {"name": "reg:squarederror"}
         },
         "gradient_booster": {
             "model": {
                 "trees": [
                     {
-                        "split_indices": [0],
-                        "split_conditions": [0.5],
-                        "left_children": [1],
-                        "right_children": [2],
+                        "split_indices": [0, -1, -1],
+                        "split_conditions": [0.5, 0.0, 0.0],
+                        "left_children": [1, 4294967295, 4294967295],
+                        "right_children": [2, 4294967295, 4294967295],
                         "base_weights": [0.0, -1.0, 1.0]
                     }
                 ]
@@ -37,14 +39,15 @@ const MODEL_JSON: &str = r#"{
 #[derive(Debug, Clone)]
 struct TrustyUDF {
     signature: Signature,
-    trees: Trees,
+    trees: GradientBoostedDecisionTrees,
     return_type: DataType,
 }
 
 impl TrustyUDF {
     fn new() -> Result<Self, Box<dyn Error>> {
         let model_data: Value = serde_json::from_str(MODEL_JSON)?;
-        let model: Trees = Trees::load(&model_data)?;
+        let model: GradientBoostedDecisionTrees =
+            GradientBoostedDecisionTrees::load_from_json(&model_data)?;
         let mut arg_types = Vec::new();
         for feature_types in model.feature_types.iter() {
             match feature_types.as_str() {

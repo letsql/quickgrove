@@ -6,7 +6,9 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use trusty::{Condition, Predicate, Trees};
+use trusty::loader::ModelLoader;
+use trusty::predicates::{Condition, Predicate};
+use trusty::GradientBoostedDecisionTrees;
 
 const MODEL_PATH: &str = "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json";
 
@@ -15,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let model_data = load_model_data(MODEL_PATH)?;
     let batch = create_record_batch()?;
-    let trees = Trees::load(&model_data)?;
+    let trees = GradientBoostedDecisionTrees::load_from_json(&model_data)?;
     let predictions: PrimitiveArray<Float64Type> = trees.predict_batch(&batch)?;
     println!("Regular tree prediction successful");
 

@@ -5,7 +5,7 @@ A zero-copy, Arrow-native inference engine for tree-based models, designed for s
 > ⚠️ **DEVELOPMENT STATUS** ⚠️
 > 
 > This project is in active development. APIs are subject to change.
-> Production use requires thorough evaluation.
+> Not ready for use in production.
 
 ## Core Features
 
@@ -16,6 +16,7 @@ A zero-copy, Arrow-native inference engine for tree-based models, designed for s
 - **Model IO**: XGBoost Json Schema support for model loading
 
 ## Installation
+We do not have a release as a cargo package yet. To follow along development, we recommend using the nix flake.
 
 ```
 nix develop

@@ -1,3 +1,4 @@
+use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::SplitType;
@@ -11,6 +12,7 @@ use arrow::datatypes::Float64Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -169,157 +171,6 @@ impl FeatureTree {
             feature_names,
             feature_types,
         }
-    }
-
-    pub fn load(
-        tree_dict: &serde_json::Value,
-        feature_names: Arc<Vec<String>>,
-        feature_types: Arc<Vec<String>>,
-    ) -> Result<Self, String> {
-        let mut tree = FeatureTree::new(feature_names, feature_types);
-
-        let split_indices: Vec<i32> = tree_dict["split_indices"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|x| x as i32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let split_conditions: Vec<f64> = tree_dict["split_conditions"]
-            .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
-            .unwrap_or_default();
-
-        let left_children: Vec<u32> = tree_dict["left_children"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|x| x as u32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let right_children: Vec<u32> = tree_dict["right_children"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_i64().map(|x| x as u32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let weights: Vec<f64> = tree_dict["base_weights"]
-            .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
-            .unwrap_or_default();
-
-        if !left_children.is_empty() {
-            let is_leaf = left_children[0] == u32::MAX;
-            let root_node = DTNode {
-                feature_index: if is_leaf { -1 } else { split_indices[0] },
-                split_value: split_conditions[0],
-                weight: weights[0],
-                is_leaf,
-                split_type: SplitType::Numerical,
-            };
-            let root_idx = tree.tree.add_root(BinaryTreeNode::new(root_node));
-
-            #[allow(clippy::too_many_arguments)]
-            fn build_tree(
-                tree: &mut BinaryTree,
-                parent_idx: usize,
-                node_idx: usize,
-                split_indices: &[i32],
-                split_conditions: &[f64],
-                left_children: &[u32],
-                right_children: &[u32],
-                weights: &[f64],
-                is_left: bool,
-            ) {
-                if node_idx >= left_children.len() {
-                    return;
-                }
-
-                let is_leaf = left_children[node_idx] == u32::MAX;
-                let node = DTNode {
-                    feature_index: if is_leaf { -1 } else { split_indices[node_idx] },
-                    split_value: split_conditions[node_idx],
-                    weight: weights[node_idx],
-                    is_leaf,
-                    split_type: SplitType::Numerical,
-                };
-
-                let current_idx = if is_left {
-                    tree.add_left_node(parent_idx, BinaryTreeNode::new(node))
-                } else {
-                    tree.add_right_node(parent_idx, BinaryTreeNode::new(node))
-                };
-
-                if !is_leaf {
-                    let left_idx = left_children[node_idx] as usize;
-                    let right_idx = right_children[node_idx] as usize;
-                    build_tree(
-                        tree,
-                        current_idx,
-                        left_idx,
-                        split_indices,
-                        split_conditions,
-                        left_children,
-                        right_children,
-                        weights,
-                        true,
-                    );
-                    build_tree(
-                        tree,
-                        current_idx,
-                        right_idx,
-                        split_indices,
-                        split_conditions,
-                        left_children,
-                        right_children,
-                        weights,
-                        false,
-                    );
-                }
-            }
-
-            if !is_leaf {
-                let left_idx = left_children[0] as usize;
-                let right_idx = right_children[0] as usize;
-                build_tree(
-                    &mut tree.tree,
-                    root_idx,
-                    left_idx,
-                    &split_indices,
-                    &split_conditions,
-                    &left_children,
-                    &right_children,
-                    &weights,
-                    true,
-                );
-                build_tree(
-                    &mut tree.tree,
-                    root_idx,
-                    right_idx,
-                    &split_indices,
-                    &split_conditions,
-                    &left_children,
-                    &right_children,
-                    &weights,
-                    false,
-                );
-            }
-        }
-
-        tree.feature_offset = tree
-            .feature_names
-            .iter()
-            .position(|name| name == &tree.feature_names[0])
-            .unwrap_or(0);
-
-        Ok(tree)
     }
 
     #[inline(always)]
@@ -781,11 +632,11 @@ impl Default for FeatureTreeBuilder {
 
 #[derive(Debug, Clone)]
 pub struct GradientBoostedDecisionTrees {
-    pub(crate) trees: Vec<FeatureTree>,
-    pub(crate) feature_names: Arc<Vec<String>>,
-    pub(crate) base_score: f64,
-    pub(crate) feature_types: Arc<Vec<String>>,
-    pub(crate) objective: Objective,
+    pub trees: Vec<FeatureTree>,
+    pub feature_names: Arc<Vec<String>>,
+    pub base_score: f64,
+    pub feature_types: Arc<Vec<String>>,
+    pub objective: Objective,
 }
 
 impl Default for GradientBoostedDecisionTrees {
@@ -801,70 +652,6 @@ impl Default for GradientBoostedDecisionTrees {
 }
 
 impl GradientBoostedDecisionTrees {
-    pub fn load(model_data: &serde_json::Value) -> Result<Self, ArrowError> {
-        let base_score = model_data["learner"]["learner_model_param"]["base_score"]
-            .as_str()
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(0.5);
-
-        let feature_names: Arc<Vec<String>> = Arc::new(
-            model_data["learner"]["feature_names"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
-
-        let feature_types: Arc<Vec<String>> = Arc::new(
-            model_data["learner"]["feature_types"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        );
-
-        let trees: Result<Vec<FeatureTree>, ArrowError> = model_data["learner"]["gradient_booster"]
-            ["model"]["trees"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|tree_data| {
-                        FeatureTree::load(
-                            tree_data,
-                            Arc::clone(&feature_names),
-                            Arc::clone(&feature_types),
-                        )
-                        .map_err(ArrowError::ParseError)
-                    })
-                    .collect()
-            })
-            .unwrap();
-
-        let trees = trees?;
-
-        let objective = match model_data["learner"]["learner_model_param"]["objective"]
-            .as_str()
-            .unwrap_or("reg:squarederror")
-        {
-            "reg:squarederror" => Objective::SquaredError,
-            _ => return Err(ArrowError::ParseError("Unsupported objective".to_string())),
-        };
-
-        Ok(GradientBoostedDecisionTrees {
-            base_score,
-            trees,
-            feature_names,
-            feature_types,
-            objective,
-        })
-    }
-
     pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
         self.predict_arrays(batch.columns())
     }
@@ -1006,6 +793,48 @@ impl GradientBoostedDecisionTrees {
                 .map(|tree| tree.num_nodes())
                 .sum::<usize>()
         );
+    }
+}
+
+impl ModelLoader for GradientBoostedDecisionTrees {
+    fn load_from_json(json: &Value) -> Result<Self, ModelError> {
+        let objective_type = XGBoostParser::parse_objective(json)?;
+
+        let (feature_names, feature_types) = XGBoostParser::parse_feature_metadata(json)?;
+
+        let base_score = json["learner"]["learner_model_param"]["base_score"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.5);
+
+        let trees_json = json["learner"]["gradient_booster"]["model"]["trees"]
+            .as_array()
+            .ok_or_else(|| ModelError::MissingField("trees".to_string()))?;
+
+        let trees = trees_json
+            .iter()
+            .map(|tree_json| {
+                let arrays = XGBoostParser::parse_tree_arrays(tree_json)?;
+
+                FeatureTreeBuilder::new()
+                    .feature_names(feature_names.clone())
+                    .feature_types(feature_types.clone())
+                    .split_indices(arrays.split_indices)
+                    .split_conditions(arrays.split_conditions)
+                    .children(arrays.left_children, arrays.right_children)
+                    .base_weights(arrays.base_weights)
+                    .build()
+                    .map_err(ModelError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            base_score,
+            trees,
+            feature_names: Arc::new(feature_names),
+            feature_types: Arc::new(feature_types),
+            objective: objective_type,
+        })
     }
 }
 
