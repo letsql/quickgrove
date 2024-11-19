@@ -1,39 +1,73 @@
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
+use crate::tree::SplitType;
 
-use super::binary_tree::*;
-use arrow::array::AsArray;
-use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
+use super::binary_tree::{BinaryTree, BinaryTreeNode, DTNode};
+use arrow::array::{
+    Array, ArrayRef, AsArray, BooleanArray, Float64Array, Float64Builder, Int64Array,
+};
 use arrow::datatypes::DataType;
 use arrow::datatypes::Float64Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum FeatureTreeError {
+    #[error("Feature names must be provided")]
+    MissingFeatureNames,
+
+    #[error("Feature types must be provided")]
+    MissingFeatureTypes,
+
+    #[error("Feature names and types must have the same length")]
+    LengthMismatch,
+
+    #[error("Feature index {0} out of bounds")]
+    InvalidFeatureIndex(usize),
+
+    #[error("Invalid node structure")]
+    InvalidStructure(String),
+}
+
+enum NodeDefinition {
+    Leaf {
+        weight: f64,
+    },
+    Split {
+        feature_index: i32,
+        split_value: f64,
+        left: usize,
+        right: usize,
+    },
+}
 
 #[derive(Debug, Clone)]
-pub struct Tree {
+pub struct FeatureTree {
     pub(crate) tree: BinaryTree,
     pub(crate) feature_offset: usize,
     pub(crate) feature_names: Arc<Vec<String>>,
     pub(crate) feature_types: Arc<Vec<String>>,
 }
 
-impl Serialize for Tree {
+impl Serialize for FeatureTree {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         #[derive(Serialize)]
-        struct TreeHelper<'a> {
+        struct FeatureTreeHelper<'a> {
             nodes: &'a Vec<BinaryTreeNode>,
             feature_offset: usize,
             feature_names: &'a Vec<String>,
             feature_types: &'a Vec<String>,
         }
 
-        let helper = TreeHelper {
+        let helper = FeatureTreeHelper {
             nodes: &self.tree.nodes,
             feature_offset: self.feature_offset,
             feature_names: &self.feature_names,
@@ -44,21 +78,21 @@ impl Serialize for Tree {
     }
 }
 
-impl<'de> Deserialize<'de> for Tree {
+impl<'de> Deserialize<'de> for FeatureTree {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct TreeHelper {
+        struct FeatureTreeHelper {
             nodes: Vec<BinaryTreeNode>,
             feature_offset: usize,
             feature_names: Vec<String>,
             feature_types: Vec<String>,
         }
 
-        let helper = TreeHelper::deserialize(deserializer)?;
-        Ok(Tree {
+        let helper = FeatureTreeHelper::deserialize(deserializer)?;
+        Ok(FeatureTree {
             tree: BinaryTree {
                 nodes: helper.nodes,
             },
@@ -69,11 +103,11 @@ impl<'de> Deserialize<'de> for Tree {
     }
 }
 
-impl fmt::Display for Tree {
+impl fmt::Display for FeatureTree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fn fmt_node(
             f: &mut fmt::Formatter<'_>,
-            tree: &Tree,
+            tree: &FeatureTree,
             node: &BinaryTreeNode,
             prefix: &str,
             is_left: bool,
@@ -102,7 +136,11 @@ impl fmt::Display for Tree {
             Ok(())
         }
 
-        fn node_to_string(node: &BinaryTreeNode, tree: &Tree, feature_names: &[String]) -> String {
+        fn node_to_string(
+            node: &BinaryTreeNode,
+            tree: &FeatureTree,
+            feature_names: &[String],
+        ) -> String {
             if node.value.is_leaf {
                 format!("Leaf (weight: {:.4})", node.value.weight)
             } else {
@@ -115,7 +153,7 @@ impl fmt::Display for Tree {
             }
         }
 
-        writeln!(f, "Tree:")?;
+        writeln!(f, "FeatureTree:")?;
         if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
             fmt_node(f, self, root, "", true, &self.feature_names)?;
         }
@@ -123,9 +161,9 @@ impl fmt::Display for Tree {
     }
 }
 
-impl Tree {
+impl FeatureTree {
     pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<String>>) -> Self {
-        Tree {
+        FeatureTree {
             tree: BinaryTree::new(),
             feature_offset: 0,
             feature_names,
@@ -138,7 +176,7 @@ impl Tree {
         feature_names: Arc<Vec<String>>,
         feature_types: Arc<Vec<String>>,
     ) -> Result<Self, String> {
-        let mut tree = Tree::new(feature_names, feature_types);
+        let mut tree = FeatureTree::new(feature_names, feature_types);
 
         let split_indices: Vec<i32> = tree_dict["split_indices"]
             .as_array()
@@ -377,12 +415,12 @@ impl Tree {
             .unwrap_or(0)
     }
 
-    pub fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<Tree> {
+    pub fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<FeatureTree> {
         if self.tree.is_empty() {
             return None;
         }
 
-        let mut new_tree = Tree::new(
+        let mut new_tree = FeatureTree::new(
             Arc::clone(&self.feature_names),
             Arc::clone(&self.feature_types),
         );
@@ -511,26 +549,248 @@ impl Tree {
             None
         }
     }
+
+    pub fn builder() -> FeatureTreeBuilder {
+        FeatureTreeBuilder::new()
+    }
+
+    fn from_nodes(
+        nodes: Vec<NodeDefinition>,
+        feature_names: Arc<Vec<String>>,
+        feature_types: Arc<Vec<String>>,
+        feature_offset: usize,
+    ) -> Result<Self, FeatureTreeError> {
+        if nodes.is_empty() {
+            return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
+        }
+
+        let mut binary_tree = BinaryTree::new();
+        let mut node_map: HashMap<usize, usize> = HashMap::new();
+
+        for (builder_idx, node_def) in nodes.iter().enumerate() {
+            let tree_idx = match node_def {
+                NodeDefinition::Split {
+                    feature_index,
+                    split_value,
+                    ..
+                } => {
+                    let node = DTNode {
+                        feature_index: *feature_index,
+                        split_value: *split_value,
+                        weight: 0.0,
+                        is_leaf: false,
+                        split_type: SplitType::Numerical,
+                    };
+
+                    if builder_idx == 0 {
+                        binary_tree.add_root(node.into())
+                    } else {
+                        binary_tree.add_orphan_node(node.into())
+                    }
+                }
+
+                NodeDefinition::Leaf { weight } => {
+                    let node = DTNode {
+                        feature_index: -1,
+                        split_value: 0.0,
+                        weight: *weight,
+                        is_leaf: true,
+                        split_type: SplitType::Numerical,
+                    };
+
+                    if builder_idx == 0 {
+                        binary_tree.add_root(node.into())
+                    } else {
+                        binary_tree.add_orphan_node(node.into())
+                    }
+                }
+            };
+            node_map.insert(builder_idx, tree_idx);
+        }
+
+        for (builder_idx, node_def) in nodes.iter().enumerate() {
+            if let NodeDefinition::Split { left, right, .. } = node_def {
+                let parent_idx = node_map[&builder_idx];
+                let left_idx = node_map[left];
+                let right_idx = node_map[right];
+
+                binary_tree
+                    .connect_left(parent_idx, left_idx)
+                    .map_err(|_| {
+                        FeatureTreeError::InvalidStructure(
+                            "Invalid left child connection".to_string(),
+                        )
+                    })?;
+                binary_tree
+                    .connect_right(parent_idx, right_idx)
+                    .map_err(|_| {
+                        FeatureTreeError::InvalidStructure(
+                            "Invalid right child connection".to_string(),
+                        )
+                    })?;
+            }
+        }
+
+        if !binary_tree.validate_connections() {
+            return Err(FeatureTreeError::InvalidStructure(
+                "Tree has disconnected nodes".into(),
+            ));
+        }
+
+        Ok(Self {
+            tree: binary_tree,
+            feature_names,
+            feature_types,
+            feature_offset,
+        })
+    }
 }
 
-impl Default for Tree {
+impl Default for FeatureTree {
     fn default() -> Self {
-        Tree::new(Arc::new(vec![]), Arc::new(vec![]))
+        FeatureTree::new(Arc::new(vec![]), Arc::new(vec![]))
+    }
+}
+
+pub struct FeatureTreeBuilder {
+    feature_names: Option<Arc<Vec<String>>>,
+    feature_types: Option<Arc<Vec<String>>>,
+    feature_offset: usize,
+    split_indices: Vec<i32>,
+    split_conditions: Vec<f64>,
+    left_children: Vec<u32>,
+    right_children: Vec<u32>,
+    base_weights: Vec<f64>,
+}
+
+impl FeatureTreeBuilder {
+    pub fn new() -> Self {
+        Self {
+            feature_names: None,
+            feature_types: None,
+            feature_offset: 0,
+            split_indices: Vec::new(),
+            split_conditions: Vec::new(),
+            left_children: Vec::new(),
+            right_children: Vec::new(),
+            base_weights: Vec::new(),
+        }
+    }
+
+    pub fn feature_names(self, names: Vec<String>) -> Self {
+        Self {
+            feature_names: Some(Arc::new(names)),
+            ..self
+        }
+    }
+
+    pub fn feature_types(self, types: Vec<String>) -> Self {
+        Self {
+            feature_types: Some(Arc::new(types)),
+            ..self
+        }
+    }
+
+    pub fn feature_offset(self, offset: usize) -> Self {
+        Self {
+            feature_offset: offset,
+            ..self
+        }
+    }
+
+    pub fn split_indices(self, indices: Vec<i32>) -> Self {
+        Self {
+            split_indices: indices,
+            ..self
+        }
+    }
+
+    pub fn split_conditions(self, conditions: Vec<f64>) -> Self {
+        Self {
+            split_conditions: conditions,
+            ..self
+        }
+    }
+
+    pub fn children(self, left: Vec<u32>, right: Vec<u32>) -> Self {
+        Self {
+            left_children: left,
+            right_children: right,
+            ..self
+        }
+    }
+
+    pub fn base_weights(self, weights: Vec<f64>) -> Self {
+        Self {
+            base_weights: weights,
+            ..self
+        }
+    }
+
+    pub fn build(self) -> Result<FeatureTree, FeatureTreeError> {
+        let feature_names = self
+            .feature_names
+            .ok_or(FeatureTreeError::MissingFeatureNames)?;
+
+        let feature_types = self
+            .feature_types
+            .ok_or(FeatureTreeError::MissingFeatureTypes)?;
+
+        if feature_names.len() != feature_types.len() {
+            return Err(FeatureTreeError::LengthMismatch);
+        }
+
+        let node_count = self.split_indices.len();
+        if self.split_conditions.len() != node_count
+            || self.left_children.len() != node_count
+            || self.right_children.len() != node_count
+            || self.base_weights.len() != node_count
+        {
+            return Err(FeatureTreeError::InvalidStructure(
+                "Inconsistent array lengths in tree definition".to_string(),
+            ));
+        }
+
+        let mut nodes = Vec::with_capacity(node_count);
+        for i in 0..node_count {
+            let is_leaf = self.left_children[i] == u32::MAX;
+            let node = if is_leaf {
+                NodeDefinition::Leaf {
+                    weight: self.base_weights[i],
+                }
+            } else {
+                NodeDefinition::Split {
+                    feature_index: self.split_indices[i],
+                    split_value: self.split_conditions[i],
+                    left: self.left_children[i] as usize,
+                    right: self.right_children[i] as usize,
+                }
+            };
+            nodes.push(node);
+        }
+
+        FeatureTree::from_nodes(nodes, feature_names, feature_types, self.feature_offset)
+    }
+}
+
+impl Default for FeatureTreeBuilder {
+    fn default() -> Self {
+        FeatureTreeBuilder::new()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Trees {
-    pub(crate) trees: Vec<Tree>,
+pub struct GradientBoostedDecisionTrees {
+    pub(crate) trees: Vec<FeatureTree>,
     pub(crate) feature_names: Arc<Vec<String>>,
     pub(crate) base_score: f64,
     pub(crate) feature_types: Arc<Vec<String>>,
     pub(crate) objective: Objective,
 }
 
-impl Default for Trees {
+impl Default for GradientBoostedDecisionTrees {
     fn default() -> Self {
-        Trees {
+        GradientBoostedDecisionTrees {
             trees: vec![],
             feature_names: Arc::new(vec![]),
             feature_types: Arc::new(vec![]),
@@ -540,7 +800,7 @@ impl Default for Trees {
     }
 }
 
-impl Trees {
+impl GradientBoostedDecisionTrees {
     pub fn load(model_data: &serde_json::Value) -> Result<Self, ArrowError> {
         let base_score = model_data["learner"]["learner_model_param"]["base_score"]
             .as_str()
@@ -569,13 +829,13 @@ impl Trees {
                 .unwrap_or_default(),
         );
 
-        let trees: Result<Vec<Tree>, ArrowError> = model_data["learner"]["gradient_booster"]
+        let trees: Result<Vec<FeatureTree>, ArrowError> = model_data["learner"]["gradient_booster"]
             ["model"]["trees"]
             .as_array()
             .map(|arr| {
                 arr.iter()
                     .map(|tree_data| {
-                        Tree::load(
+                        FeatureTree::load(
                             tree_data,
                             Arc::clone(&feature_names),
                             Arc::clone(&feature_types),
@@ -596,7 +856,7 @@ impl Trees {
             _ => return Err(ArrowError::ParseError("Unsupported objective".to_string())),
         };
 
-        Ok(Trees {
+        Ok(GradientBoostedDecisionTrees {
             base_score,
             trees,
             feature_names,
@@ -704,13 +964,13 @@ impl Trees {
     }
 
     pub fn prune(&self, predicate: &Predicate) -> Self {
-        let pruned_trees: Vec<Tree> = self
+        let pruned_trees: Vec<FeatureTree> = self
             .trees
             .iter()
             .filter_map(|tree| tree.prune(predicate, &self.feature_names))
             .collect();
 
-        Trees {
+        GradientBoostedDecisionTrees {
             trees: pruned_trees,
             feature_names: self.feature_names.clone(),
             feature_types: self.feature_types.clone(),
@@ -746,5 +1006,53 @@ impl Trees {
                 .map(|tree| tree.num_nodes())
                 .sum::<usize>()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xgboost_style_builder() -> Result<(), FeatureTreeError> {
+        // This represents a simple tree:
+        //          [age < 30]
+        //         /          \
+        //    [-1.0]        [income < 50k]
+        //                  /           \
+        //               [0.0]         [1.0]
+
+        let tree = FeatureTreeBuilder::new()
+            .feature_names(vec!["age".to_string(), "income".to_string()])
+            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .split_indices(vec![0, -1, 1, -1, -1])
+            .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
+            .children(
+                vec![1, u32::MAX, 3, u32::MAX, u32::MAX], // left children
+                vec![2, u32::MAX, 4, u32::MAX, u32::MAX], // right children
+            )
+            .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
+            .build()?;
+
+        // Test predictions
+        assert!(tree.predict(&[25.0, 0.0]) < 0.0); // young
+        assert!(tree.predict(&[35.0, 60000.0]) > 0.0); // old, high income
+        assert!(tree.predict(&[35.0, 40000.0]) == 0.0); // old, low income
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_array_length_mismatch() {
+        let result = FeatureTreeBuilder::new()
+            .feature_names(vec!["age".to_string()])
+            .feature_types(vec!["numerical".to_string()])
+            .split_indices(vec![0])
+            .split_conditions(vec![30.0])
+            .children(vec![1], vec![2, 3]) // mismatched lengths
+            .base_weights(vec![0.0])
+            .build();
+
+        assert!(matches!(result, Err(FeatureTreeError::InvalidStructure(_))));
     }
 }

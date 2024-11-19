@@ -3,7 +3,7 @@ pub mod predicates;
 pub mod tree;
 pub use objective::Objective;
 pub use predicates::{AutoPredicate, Condition, Predicate};
-pub use tree::{BinaryTree, BinaryTreeNode, DTNode, SplitType, Tree, Trees};
+pub use tree::{FeatureTree, FeatureTreeBuilder, GradientBoostedDecisionTrees};
 
 #[cfg(test)]
 mod tests {
@@ -14,189 +14,78 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use std::sync::Arc;
+    fn create_sample_tree() -> FeatureTree {
+        let feature_names = vec!["feature0".to_string()];
+        let feature_types = vec!["float".to_string()];
 
-    fn create_sample_tree() -> Tree {
-        // Tree structure:
-        //     [0] (feature 0 < 0.5)
-        //    /   \
-        //  [1]   [2]
-        // (-1.0) (1.0)
-        let mut tree = Tree::new(
-            Arc::new(vec!["feature0".to_string()]),
-            Arc::new(vec!["float".to_string()]),
-        );
-
-        let root = BinaryTreeNode::new(DTNode {
-            feature_index: 0,
-            split_value: 0.5,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let root_idx = tree.tree.add_root(root);
-
-        let left = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: -1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_left_node(root_idx, left);
-
-        let right = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: 1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_right_node(root_idx, right);
-
-        tree
+        FeatureTreeBuilder::new()
+            .feature_names(feature_names)
+            .feature_types(feature_types)
+            .split_indices(vec![
+                0,  // root: split on feature0
+                -1, // left leaf
+                -1, // right leaf
+            ])
+            .split_conditions(vec![
+                0.5, // root: split at 0.5
+                0.0, // left leaf (unused)
+                0.0, // right leaf (unused)
+            ])
+            // children: u32::MAX indicates no children (leaf)
+            .children(
+                vec![1, u32::MAX, u32::MAX], // left children
+                vec![2, u32::MAX, u32::MAX], // right children
+            )
+            .base_weights(vec![
+                0.0,  // root (internal nodes have weight 0)
+                -1.0, // left leaf prediction
+                1.0,  // right leaf prediction
+            ])
+            .build()
+            .expect("Valid tree definition")
     }
 
-    fn create_tree_nested_features() -> Tree {
+    fn create_tree_nested_features() -> FeatureTree {
         //              feature0 < 1.0
         //             /             \
         //    feature0 < 0.5         Leaf (2.0)
         //   /           \
         // Leaf (-1.0)  Leaf (1.0)
-        let mut tree = Tree::new(
-            Arc::new(vec!["feature0".to_string(), "feature1".to_string()]),
-            Arc::new(vec!["float".to_string(), "float".to_string()]),
-        );
-
-        let root = BinaryTreeNode::new(DTNode {
-            feature_index: 0,
-            split_value: 1.0,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let root_idx = tree.tree.add_root(root);
-
-        let left = BinaryTreeNode::new(DTNode {
-            feature_index: 0,
-            split_value: 0.5,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let left_idx = tree.tree.add_left_node(root_idx, left);
-
-        let right = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: 2.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_right_node(root_idx, right);
-
-        let left_left = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: -1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_left_node(left_idx, left_left);
-
-        let left_right = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: 1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_right_node(left_idx, left_right);
-
-        tree
+        FeatureTreeBuilder::new()
+            .feature_names(vec!["feature0".to_string(), "feature1".to_string()])
+            .feature_types(vec!["float".to_string(), "float".to_string()])
+            .split_indices(vec![0, 0, -1, -1, -1])
+            .split_conditions(vec![1.0, 0.5, 0.0, 0.0, 0.0])
+            .children(
+                vec![1, 3, u32::MAX, u32::MAX, u32::MAX],
+                vec![2, 4, u32::MAX, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, 0.0, 2.0, -1.0, 1.0])
+            .build()
+            .unwrap()
     }
 
-    fn create_sample_tree_deep() -> Tree {
-        let mut tree = Tree::new(
-            Arc::new(vec![
+    fn create_sample_tree_deep() -> FeatureTree {
+        FeatureTreeBuilder::new()
+            .feature_names(vec![
                 "feature0".to_string(),
                 "feature1".to_string(),
                 "feature2".to_string(),
-            ]),
-            Arc::new(vec![
+            ])
+            .feature_types(vec![
                 "float".to_string(),
                 "float".to_string(),
                 "float".to_string(),
-            ]),
-        );
-
-        let root = BinaryTreeNode::new(DTNode {
-            feature_index: 0,
-            split_value: 0.5,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let root_idx = tree.tree.add_root(root);
-
-        // Left subtree
-        let left = BinaryTreeNode::new(DTNode {
-            feature_index: 1,
-            split_value: 0.3,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let left_idx = tree.tree.add_left_node(root_idx, left);
-
-        // Right subtree
-        let right = BinaryTreeNode::new(DTNode {
-            feature_index: 2,
-            split_value: 0.7,
-            weight: 0.0,
-            is_leaf: false,
-            split_type: SplitType::Numerical,
-        });
-        let right_idx = tree.tree.add_right_node(root_idx, right);
-
-        // Left subtree leaves
-        let left_left = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: -2.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_left_node(left_idx, left_left);
-
-        let left_right = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: -1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_right_node(left_idx, left_right);
-
-        // Right subtree leaves
-        let right_left = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: 1.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_left_node(right_idx, right_left);
-
-        let right_right = BinaryTreeNode::new(DTNode {
-            feature_index: -1,
-            split_value: 0.0,
-            weight: 2.0,
-            is_leaf: true,
-            split_type: SplitType::Numerical,
-        });
-        tree.tree.add_right_node(right_idx, right_right);
-
-        tree
+            ])
+            .split_indices(vec![0, 1, 2, -1, -1, -1, -1])
+            .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.0, 0.0])
+            .children(
+                vec![1, 3, 5, u32::MAX, u32::MAX, u32::MAX, u32::MAX],
+                vec![2, 4, 6, u32::MAX, u32::MAX, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, 0.0, 0.0, -2.0, -1.0, 1.0, 2.0])
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -278,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_trees_predict_batch() {
-        let trees = Trees {
+        let trees = GradientBoostedDecisionTrees {
             base_score: 0.5,
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
@@ -297,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_trees_predict_batch_with_missing_values() {
-        let trees = Trees {
+        let trees = GradientBoostedDecisionTrees {
             base_score: 0.5,
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
@@ -315,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_trees_num_trees() {
-        let trees = Trees {
+        let trees = GradientBoostedDecisionTrees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
@@ -327,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_trees_tree_depths() {
-        let trees = Trees {
+        let trees = GradientBoostedDecisionTrees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),
@@ -339,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_trees_prune() {
-        let trees = Trees {
+        let trees = GradientBoostedDecisionTrees {
             base_score: 0.5,
             trees: vec![create_sample_tree(), create_sample_tree()],
             feature_names: Arc::new(vec!["feature0".to_string()]),

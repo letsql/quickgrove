@@ -15,13 +15,17 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use trusty::{Condition, Predicate, Trees};
+use trusty::predicates::{Condition, Predicate};
+use trusty::tree::GradientBoostedDecisionTrees;
 
 const BATCHSIZE: usize = 192;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<Float64Array> {
+fn predict_batch(
+    trees: &GradientBoostedDecisionTrees,
+    batches: &[RecordBatch],
+) -> Result<Float64Array> {
     let predictions: Vec<ArrayRef> = batches
         .par_iter()
         .map(|batch| -> Result<ArrayRef> {
@@ -47,7 +51,7 @@ fn predict_batch(trees: &Trees, batches: &[RecordBatch]) -> Result<Float64Array>
 }
 
 fn predict_batch_with_autoprune(
-    trees: &Trees,
+    trees: &GradientBoostedDecisionTrees,
     batches: &[RecordBatch],
     feature_names: &Arc<Vec<String>>,
 ) -> Result<Float64Array> {
@@ -621,11 +625,11 @@ fn benchmark_implementations(c: &mut Criterion) {
     }
 }
 
-fn load_model(path: &str) -> Result<Trees> {
+fn load_model(path: &str) -> Result<GradientBoostedDecisionTrees> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let model_data: Value = serde_json::from_reader(reader)?;
-    Ok(Trees::load(&model_data)?)
+    Ok(GradientBoostedDecisionTrees::load(&model_data)?)
 }
 
 criterion_group! {
