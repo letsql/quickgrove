@@ -4,11 +4,8 @@ use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::SplitType;
 
 use super::binary_tree::{BinaryTree, BinaryTreeNode, DTNode};
-use arrow::array::{
-    Array, ArrayRef, AsArray, BooleanArray, Float64Array, Float64Builder, Int64Array,
-};
+use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::datatypes::DataType;
-use arrow::datatypes::Float64Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use serde::{Deserialize, Serialize};
@@ -195,24 +192,6 @@ impl FeatureTree {
         } else {
             node.value.weight
         }
-    }
-
-    #[inline(always)]
-    pub fn predict_arrays(
-        &self,
-        feature_arrays: &[&dyn Array],
-    ) -> Result<Float64Array, ArrowError> {
-        let num_rows = feature_arrays[0].len();
-        let mut builder = Float64Builder::with_capacity(num_rows);
-        let mut row_features = vec![0.0; feature_arrays.len()];
-
-        for row in 0..num_rows {
-            for (i, array) in feature_arrays.iter().enumerate() {
-                row_features[i] = array.as_primitive::<Float64Type>().value(row);
-            }
-            builder.append_value(self.predict(&row_features));
-        }
-        Ok(builder.finish())
     }
 
     pub fn depth(&self) -> usize {
@@ -835,7 +814,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{BooleanArray, Float64Array, Int64Array};
+    use arrow::array::Float64Array;
     use arrow::datatypes::Field;
     use arrow::datatypes::Schema;
     use std::sync::Arc;
@@ -939,29 +918,12 @@ mod tests {
     }
 
     #[test]
-    fn test_feature_tree_array_predictions() -> Result<(), FeatureTreeError> {
-        let tree = create_simple_tree()?;
-        let batch = create_sample_record_batch();
-
-        let result = tree
-            .predict_arrays(&[batch.column(0).as_ref(), batch.column(1).as_ref()])
-            .unwrap();
-
-        let expected = vec![-1.0, 1.0, 0.0, -1.0];
-        assert_eq!(result.values(), expected.as_slice());
-
-        Ok(())
-    }
-
-    #[test]
     fn test_feature_tree_serialization() -> Result<(), FeatureTreeError> {
         let original_tree = create_simple_tree()?;
 
-        // Test serialization
         let serialized = serde_json::to_string(&original_tree).unwrap();
         let deserialized: FeatureTree = serde_json::from_str(&serialized).unwrap();
 
-        // Test that predictions are the same after serialization
         let test_cases = vec![
             vec![25.0, 30000.0],
             vec![35.0, 60000.0],
@@ -992,7 +954,6 @@ mod tests {
             .build();
         assert!(matches!(result, Err(FeatureTreeError::MissingFeatureNames)));
 
-        // Test length mismatch between feature names and types
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
             .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
@@ -1045,58 +1006,15 @@ mod tests {
     }
 
     #[test]
-    fn test_different_array_types() -> Result<(), FeatureTreeError> {
-        let tree = create_simple_tree()?;
-
-        // Test with different array types
-        let age_array = Int64Array::from(vec![25, 35, 35, 28]);
-        let income_array = BooleanArray::from(vec![false, true, false, false]);
-
-        let result = tree.predict_arrays(&[&age_array, &income_array]).unwrap();
-
-        // Verify predictions work with converted values
-        assert_eq!(result.len(), 4);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_tree_predict_arrays() {
-        let tree = create_sample_tree();
-
-        let mut builder = Float64Builder::new();
-        builder.append_value(0.3); // left: -1.0
-        builder.append_value(0.7); // right: 1.0
-        builder.append_value(0.5); // right: 1.0
-        builder.append_value(0.0); // left: -1.0
-        builder.append_null(); // default left: -1.0
-        let array = Arc::new(builder.finish());
-        let array_ref: &dyn Array = array.as_ref();
-
-        let predictions = tree.predict_arrays(&[array_ref]).unwrap();
-
-        assert_eq!(predictions.len(), 5);
-        assert_eq!(predictions.value(0), -1.0); // 0.3 < 0.5 -> left
-        assert_eq!(predictions.value(1), 1.0); // 0.7 >= 0.5 -> right
-        assert_eq!(predictions.value(2), 1.0); // 0.5 >= 0.5 -> right
-        assert_eq!(predictions.value(3), -1.0); // 0.0 < 0.5 -> left
-        assert_eq!(predictions.value(4), -1.0); // default left (this needs to be fixed since
-                                                // default values should come from default_true array in the model json)
-    }
-
-    #[test]
     fn test_pruning() -> Result<(), FeatureTreeError> {
         let tree = create_simple_tree()?;
 
-        // Create a predicate that forces age >= 30
         let mut conditions = HashMap::new();
         conditions.insert("age".to_string(), vec![Condition::GreaterThanOrEqual(30.0)]);
         let predicate = Predicate { conditions };
 
-        // Prune the tree
         let pruned_tree = tree.prune(&predicate, &tree.feature_names).unwrap();
 
-        // After pruning, all predictions should follow the right path
         let test_cases = vec![
             vec![25.0, 30000.0], // Would have gone left in original tree
             vec![35.0, 60000.0],
@@ -1161,7 +1079,6 @@ mod tests {
             "feature2".to_string(),
         ];
 
-        // Test case 1: Multiple conditions affecting right path
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
         predicate.add_condition("feature1".to_string(), Condition::LessThan(0.4));
@@ -1169,7 +1086,6 @@ mod tests {
         assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 2.0);
         assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
 
-        // Test case 2: Multiple conditions affecting left path
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
         predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
@@ -1199,7 +1115,6 @@ mod tests {
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
             .build()?;
 
-        // Test predictions
         assert!(tree.predict(&[25.0, 0.0]) < 0.0); // young
         assert!(tree.predict(&[35.0, 60000.0]) > 0.0); // old, high income
         assert!(tree.predict(&[35.0, 40000.0]) == 0.0); // old, low income
