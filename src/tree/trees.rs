@@ -8,10 +8,12 @@ use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, 
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -27,6 +29,95 @@ pub enum FeatureTreeError {
     InvalidFeatureIndex(usize),
     #[error("Invalid node structure")]
     InvalidStructure(String),
+    #[error("Unsupported feature type: {0}. Supported types are: int, float, i (indicator), q (quantile)")]
+    UnsupportedType(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum ModelFeatureType {
+    Float,
+    Int,
+    Indicator,
+}
+
+impl FromStr for ModelFeatureType {
+    type Err = FeatureTreeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "int" => Ok(ModelFeatureType::Int),
+            "float" => Ok(ModelFeatureType::Float),
+            "i" => Ok(ModelFeatureType::Indicator),
+            unsupported => Err(FeatureTreeError::UnsupportedType(unsupported.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for ModelFeatureType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ModelFeatureType::Int => write!(f, "int"),
+            ModelFeatureType::Float => write!(f, "float"),
+            ModelFeatureType::Indicator => write!(f, "i"),
+        }
+    }
+}
+
+impl ModelFeatureType {
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, ModelFeatureType::Float | ModelFeatureType::Int)
+    }
+
+    pub fn validate_value(&self, value: f64) -> bool {
+        match self {
+            ModelFeatureType::Float => true,
+            ModelFeatureType::Int => value.fract() == 0.0,
+            ModelFeatureType::Indicator => value == 0.0 || value == 1.0,
+        }
+    }
+
+    pub fn get_arrow_data_type(&self) -> arrow::datatypes::DataType {
+        use arrow::datatypes::DataType;
+        match self {
+            ModelFeatureType::Float => DataType::Float64,
+            ModelFeatureType::Int => DataType::Int64,
+            ModelFeatureType::Indicator => DataType::Boolean,
+        }
+    }
+}
+impl Serialize for ModelFeatureType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+struct ModelFeatureTypeVisitor;
+
+impl<'de> Visitor<'de> for ModelFeatureTypeVisitor {
+    type Value = ModelFeatureType;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a string representing a model feature type")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        ModelFeatureType::from_str(value).map_err(de::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelFeatureType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(ModelFeatureTypeVisitor)
+    }
 }
 
 enum NodeDefinition {
@@ -49,7 +140,7 @@ pub struct FeatureTree {
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
-    pub(crate) feature_types: Arc<Vec<String>>,
+    pub(crate) feature_types: Arc<Vec<ModelFeatureType>>,
 }
 
 mod serde_helpers {
@@ -155,7 +246,7 @@ impl fmt::Display for FeatureTree {
 }
 
 impl FeatureTree {
-    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<String>>) -> Self {
+    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<ModelFeatureType>>) -> Self {
         FeatureTree {
             tree: BinaryTree::new(),
             feature_offset: 0,
@@ -381,9 +472,19 @@ impl FeatureTree {
     fn from_nodes(
         nodes: Vec<NodeDefinition>,
         feature_names: Arc<Vec<String>>,
-        feature_types: Arc<Vec<String>>,
+        feature_types: Arc<Vec<ModelFeatureType>>,
         feature_offset: usize,
     ) -> Result<Self, FeatureTreeError> {
+        if nodes.is_empty() {
+            return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
+        }
+        if feature_names.is_empty() {
+            return Err(FeatureTreeError::MissingFeatureNames);
+        }
+        if feature_types.is_empty() {
+            return Err(FeatureTreeError::MissingFeatureTypes);
+        }
+
         if nodes.is_empty() {
             return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
         }
@@ -478,7 +579,7 @@ impl Default for FeatureTree {
 
 pub struct FeatureTreeBuilder {
     feature_names: Option<Arc<Vec<String>>>,
-    feature_types: Option<Arc<Vec<String>>>,
+    feature_types: Option<Arc<Vec<ModelFeatureType>>>,
     feature_offset: usize,
     split_indices: Vec<i32>,
     split_conditions: Vec<f64>,
@@ -508,7 +609,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn feature_types(self, types: Vec<String>) -> Self {
+    pub fn feature_types(self, types: Vec<ModelFeatureType>) -> Self {
         Self {
             feature_types: Some(Arc::new(types)),
             ..self
@@ -608,7 +709,7 @@ pub struct GradientBoostedDecisionTrees {
     pub trees: Vec<FeatureTree>,
     pub feature_names: Arc<Vec<String>>,
     pub base_score: f64,
-    pub feature_types: Arc<Vec<String>>,
+    pub feature_types: Arc<Vec<ModelFeatureType>>,
     pub objective: Objective,
 }
 
@@ -633,13 +734,11 @@ impl GradientBoostedDecisionTrees {
         let num_rows = feature_arrays[0].len();
         let num_features = feature_arrays.len();
         let mut builder = Float64Builder::with_capacity(num_rows);
-
         let mut feature_values = Vec::with_capacity(num_features);
-        feature_values.resize_with(num_features, Vec::new);
 
-        for (i, array) in feature_arrays.iter().enumerate() {
-            feature_values[i] = match array.data_type() {
-                DataType::Float64 => {
+        for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
+            let values = match (array.data_type(), feature_type) {
+                (DataType::Float64, ModelFeatureType::Float) => {
                     let array = array
                         .as_any()
                         .downcast_ref::<Float64Array>()
@@ -648,13 +747,13 @@ impl GradientBoostedDecisionTrees {
                         })?;
                     array.values().to_vec()
                 }
-                DataType::Int64 => {
+                (DataType::Int64, ModelFeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
                     array.values().iter().map(|&x| x as f64).collect()
                 }
-                DataType::Boolean => {
+                (DataType::Boolean, ModelFeatureType::Indicator) => {
                     let array = array
                         .as_any()
                         .downcast_ref::<BooleanArray>()
@@ -667,12 +766,23 @@ impl GradientBoostedDecisionTrees {
                         .map(|x| if x { 1.0 } else { 0.0 })
                         .collect()
                 }
-                _ => {
-                    return Err(ArrowError::InvalidArgumentError(
-                        "Unsupported feature type".into(),
-                    ))?;
+                (actual, expected) => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Feature: expected {:?} for type {}, got {:?}",
+                        expected.get_arrow_data_type(),
+                        expected,
+                        actual
+                    )));
                 }
             };
+
+            if !values.iter().all(|&v| feature_type.validate_value(v)) {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Values do not match type {} constraints",
+                    feature_type
+                )));
+            }
+            feature_values.push(values);
         }
 
         let mut row_features = vec![0.0; num_features];
@@ -772,17 +882,9 @@ impl GradientBoostedDecisionTrees {
 impl ModelLoader for GradientBoostedDecisionTrees {
     fn load_from_json(json: &Value) -> Result<Self, ModelError> {
         let objective_type = XGBoostParser::parse_objective(json)?;
-
         let (feature_names, feature_types) = XGBoostParser::parse_feature_metadata(json)?;
-
-        let base_score = json["learner"]["learner_model_param"]["base_score"]
-            .as_str()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.5);
-
-        let trees_json = json["learner"]["gradient_booster"]["model"]["trees"]
-            .as_array()
-            .ok_or_else(|| ModelError::MissingField("trees".to_string()))?;
+        let base_score = XGBoostParser::parse_base_score(json)?;
+        let trees_json = XGBoostParser::parse_trees(json)?;
 
         let trees = trees_json
             .iter()
@@ -829,7 +931,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -848,7 +950,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["feature0".to_string()])
-            .feature_types(vec!["numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float])
             .split_indices(vec![0, -1, -1])
             .split_conditions(vec![0.5, 0.0, 0.0])
             .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
@@ -874,9 +976,9 @@ mod tests {
                 "feature2".to_string(),
             ])
             .feature_types(vec![
-                "float".to_string(),
-                "float".to_string(),
-                "float".to_string(),
+                ModelFeatureType::Float,
+                ModelFeatureType::Float,
+                ModelFeatureType::Float,
             ])
             .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
             .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])
@@ -946,20 +1048,21 @@ mod tests {
     fn test_feature_tree_builder_validation() {
         // Test missing feature names
         let result = FeatureTreeBuilder::new()
-            .feature_types(vec!["numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
-            .children(vec![1], vec![2])
+            .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::MissingFeatureNames)));
 
+        // Test length mismatch
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
-            .children(vec![1], vec![2])
+            .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::LengthMismatch)));
@@ -983,7 +1086,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees: vec![tree1, tree2],
             feature_names: Arc::new(vec!["age".to_string(), "income".to_string()]),
-            feature_types: Arc::new(vec!["numerical".to_string(), "numerical".to_string()]),
+            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
             base_score: 0.5,
             objective: Objective::SquaredError,
         };
@@ -1105,7 +1208,7 @@ mod tests {
 
         let tree = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -1126,7 +1229,7 @@ mod tests {
     fn test_array_length_mismatch() {
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec!["numerical".to_string()])
+            .feature_types(vec![ModelFeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![1], vec![2, 3]) // mismatched lengths
@@ -1134,5 +1237,158 @@ mod tests {
             .build();
 
         assert!(matches!(result, Err(FeatureTreeError::InvalidStructure(_))));
+    }
+
+    fn create_mixed_type_record_batch() -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new("f0", DataType::Float64, false), // float feature
+            Field::new("f1", DataType::Int64, false),   // integer feature
+            Field::new("f2", DataType::Boolean, false), // boolean feature
+        ]);
+
+        let float_array = Float64Array::from(vec![0.5, 0.3, 0.7, 0.4]);
+        let int_array = Int64Array::from(vec![100, 50, 75, 25]);
+        let bool_array = BooleanArray::from(vec![true, false, true, false]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(float_array),
+                Arc::new(int_array),
+                Arc::new(bool_array),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn create_mixed_type_tree() -> FeatureTree {
+        // Create a tree that uses all feature types:
+        //                [f0 < 0.5]
+        //               /          \
+        //        [f1 < 60]        [f2 == true]
+        //        /       \        /           \
+        //    [-1.0]    [0.0]  [1.0]        [2.0]
+
+        FeatureTreeBuilder::new()
+            .feature_names(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()])
+            .feature_types(vec![
+                ModelFeatureType::Float,
+                ModelFeatureType::Int,
+                ModelFeatureType::Indicator,
+            ])
+            .split_indices(vec![0, 1, -1, -1, 2, -1, -1])
+            .split_conditions(vec![0.5, 60.0, 0.0, 0.0, 0.5, 0.0, 0.0])
+            .children(
+                vec![1, 2, u32::MAX, u32::MAX, 5, u32::MAX, u32::MAX],
+                vec![4, 3, u32::MAX, u32::MAX, 6, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 2.0])
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_predict_arrays_mixed_types() {
+        let tree = create_mixed_type_tree();
+        let batch = create_mixed_type_record_batch();
+
+        let gbdt = GradientBoostedDecisionTrees {
+            trees: vec![tree],
+            feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()]),
+            feature_types: Arc::new(vec![
+                ModelFeatureType::Float,
+                ModelFeatureType::Int,
+                ModelFeatureType::Indicator,
+            ]),
+            base_score: 0.0,
+            objective: Objective::SquaredError,
+        };
+
+        let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
+
+        // Row 0: f0=0.5, f1=100, f2=true(1.0)
+        //   f0=0.5 >= 0.5 -> right path -> f2=1.0 >= 0.5 -> 2.0
+        // Row 1: f0=0.3, f1=50, f2=false(0.0)
+        //   f0=0.3 < 0.5 -> left path -> f1=50 < 60 -> -1.0
+        // Row 2: f0=0.7, f1=75, f2=true(1.0)
+        //   f0=0.7 >= 0.5 -> right path -> f2=1.0 >= 0.5 -> 2.0
+        // Row 3: f0=0.4, f1=25, f2=false(0.0)
+        //   f0=0.4 < 0.5 -> left path -> f1=25 < 60 -> -1.0
+
+        let expected = [2.0, -1.0, 2.0, -1.0];
+        for (i, &expected_value) in expected.iter().enumerate() {
+            assert!(
+                (predictions.value(i) - expected_value).abs() < 1e-6,
+                "Mismatch at index {}: expected {}, got {}",
+                i,
+                expected_value,
+                predictions.value(i)
+            );
+        }
+    }
+
+    #[test]
+    fn test_predict_arrays_batch_processing() {
+        // Create a larger dataset to test batch processing
+        let schema = Schema::new(vec![
+            Field::new("f0", DataType::Float64, false),
+            Field::new("f1", DataType::Float64, false),
+        ]);
+
+        let n_rows = 1000;
+        let f0_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) / n_rows as f64).collect();
+        let f1_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) * 2.0).collect();
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Float64Array::from(f0_data)),
+                Arc::new(Float64Array::from(f1_data)),
+            ],
+        )
+        .unwrap();
+
+        let trees: Vec<FeatureTree> = (0..100) // goes into batch processing if trees>=100
+            .map(|_| create_sample_tree())
+            .collect();
+
+        let gbdt = GradientBoostedDecisionTrees {
+            trees,
+            feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
+            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            base_score: 0.0,
+            objective: Objective::SquaredError,
+        };
+
+        let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
+        assert_eq!(predictions.len(), n_rows);
+    }
+
+    #[test]
+    fn test_predict_arrays_error_handling() {
+        let schema = Schema::new(vec![
+            Field::new("f0", DataType::Utf8, false), // Unsupported type
+            Field::new("f1", DataType::Float64, false),
+        ]);
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(arrow::array::StringArray::from(vec!["invalid"])),
+                Arc::new(Float64Array::from(vec![1.0])),
+            ],
+        )
+        .unwrap();
+
+        let gbdt = GradientBoostedDecisionTrees {
+            trees: vec![create_sample_tree()],
+            feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
+            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            base_score: 0.0,
+            objective: Objective::SquaredError,
+        };
+
+        let result = gbdt.predict_arrays(batch.columns());
+        assert!(matches!(result, Err(ArrowError::InvalidArgumentError(_))));
     }
 }

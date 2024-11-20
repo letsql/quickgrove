@@ -1,11 +1,15 @@
 use crate::loader::ModelError;
 use crate::objective::Objective;
+use crate::tree::ModelFeatureType;
 use serde_json::Value;
+use std::str::FromStr;
 
 pub(crate) struct XGBoostParser;
 
 impl XGBoostParser {
-    pub fn parse_feature_metadata(json: &Value) -> Result<(Vec<String>, Vec<String>), ModelError> {
+    pub fn parse_feature_metadata(
+        json: &Value,
+    ) -> Result<(Vec<String>, Vec<ModelFeatureType>), ModelError> {
         let feature_names = json["learner"]["feature_names"]
             .as_array()
             .ok_or_else(|| ModelError::MissingField("feature_names".to_string()))?
@@ -16,7 +20,6 @@ impl XGBoostParser {
                     .map(String::from)
             })
             .collect::<Result<Vec<_>, _>>()?;
-
         let feature_types = json["learner"]["feature_types"]
             .as_array()
             .ok_or_else(|| ModelError::MissingField("feature_types".to_string()))?
@@ -24,7 +27,11 @@ impl XGBoostParser {
             .map(|v| {
                 v.as_str()
                     .ok_or_else(|| ModelError::InvalidFieldType("feature_types".to_string()))
-                    .map(String::from)
+                    .and_then(|type_str| {
+                        ModelFeatureType::from_str(type_str).map_err(|e| {
+                            ModelError::InvalidFieldType(format!("feature_types: {}", e))
+                        })
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -55,6 +62,20 @@ impl XGBoostParser {
             right_children,
             base_weights,
         })
+    }
+
+    pub fn parse_base_score(json: &Value) -> Result<f64, ModelError> {
+        let err = || ModelError::MissingField("base_score".to_string());
+        json["learner"]["learner_model_param"]["base_score"]
+            .as_str()
+            .ok_or_else(err)
+            .and_then(|s| s.parse().map_err(|_| err()))
+    }
+
+    pub fn parse_trees(json: &Value) -> Result<&Vec<Value>, ModelError> {
+        json["learner"]["gradient_booster"]["model"]["trees"]
+            .as_array()
+            .ok_or_else(|| ModelError::MissingField("trees".to_string()))
     }
 
     fn extract_array<T>(
