@@ -55,12 +55,17 @@ impl XGBoostParser {
 
         let base_weights = Self::extract_array::<f64>(tree_json, "base_weights", |v| v.as_f64())?;
 
+        let default_left = Self::extract_array::<i32>(tree_json, "default_left", |v| {
+            v.as_i64().map(|x| x as i32)
+        })?;
+
         Ok(TreeArrays {
             split_indices,
             split_conditions,
             left_children,
             right_children,
             base_weights,
+            default_left,
         })
     }
 
@@ -112,4 +117,5 @@ pub(crate) struct TreeArrays {
     pub left_children: Vec<u32>,
     pub right_children: Vec<u32>,
     pub base_weights: Vec<f64>,
+    pub default_left: Vec<i32>,
 }

@@ -126,6 +126,7 @@ enum NodeDefinition {
     },
     Split {
         feature_index: i32,
+        default_left: i32,
         split_value: f64,
         left: usize,
         right: usize,
@@ -497,6 +498,7 @@ impl FeatureTree {
                 NodeDefinition::Split {
                     feature_index,
                     split_value,
+                    default_left,
                     ..
                 } => {
                     let node = DTNode {
@@ -505,6 +507,7 @@ impl FeatureTree {
                         weight: 0.0,
                         is_leaf: false,
                         split_type: SplitType::Numerical,
+                        default_left: *default_left,
                     };
 
                     if builder_idx == 0 {
@@ -521,6 +524,7 @@ impl FeatureTree {
                         weight: *weight,
                         is_leaf: true,
                         split_type: SplitType::Numerical,
+                        default_left: 0,
                     };
 
                     if builder_idx == 0 {
@@ -586,6 +590,7 @@ pub struct FeatureTreeBuilder {
     left_children: Vec<u32>,
     right_children: Vec<u32>,
     base_weights: Vec<f64>,
+    default_left: Vec<i32>,
 }
 
 impl FeatureTreeBuilder {
@@ -599,6 +604,7 @@ impl FeatureTreeBuilder {
             left_children: Vec::new(),
             right_children: Vec::new(),
             base_weights: Vec::new(),
+            default_left: Vec::new(),
         }
     }
 
@@ -652,6 +658,13 @@ impl FeatureTreeBuilder {
         }
     }
 
+    pub fn default_left(self, indices: Vec<i32>) -> Self {
+        Self {
+            default_left: indices,
+            ..self
+        }
+    }
+
     pub fn build(self) -> Result<FeatureTree, FeatureTreeError> {
         let feature_names = self
             .feature_names
@@ -689,6 +702,7 @@ impl FeatureTreeBuilder {
                     split_value: self.split_conditions[i],
                     left: self.left_children[i] as usize,
                     right: self.right_children[i] as usize,
+                    default_left: self.default_left[i],
                 }
             };
             nodes.push(node);
@@ -898,6 +912,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
                     .split_conditions(arrays.split_conditions)
                     .children(arrays.left_children, arrays.right_children)
                     .base_weights(arrays.base_weights)
+                    .default_left(arrays.default_left)
                     .build()
                     .map_err(ModelError::from)
             })
@@ -939,6 +954,7 @@ mod tests {
                 vec![2, u32::MAX, 4, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
+            .default_left(vec![0, 0, 0, 0, 0])
             .build()
     }
 
@@ -955,6 +971,7 @@ mod tests {
             .split_conditions(vec![0.5, 0.0, 0.0])
             .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
             .base_weights(vec![0.0, -1.0, 1.0])
+            .default_left(vec![0, 0, 0])
             .build()
             .unwrap()
     }
@@ -987,6 +1004,7 @@ mod tests {
                 vec![5, 2, 6, u32::MAX, u32::MAX, 6, 8, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, 0.0, 0.0, -1.0, -2.0, 0.0, 2.0, 2.0, 3.0])
+            .default_left(vec![0, 0, 0, 0, 0, 0, 0, 0, 0])
             .build()
             .unwrap()
     }
@@ -1053,6 +1071,7 @@ mod tests {
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
+            .default_left(vec![0])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::MissingFeatureNames)));
 
@@ -1064,6 +1083,7 @@ mod tests {
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
+            .default_left(vec![0])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::LengthMismatch)));
     }
@@ -1216,6 +1236,7 @@ mod tests {
                 vec![2, u32::MAX, 4, u32::MAX, u32::MAX], // right children
             )
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
+            .default_left(vec![0, 0, 0, 0, 0])
             .build()?;
 
         assert!(tree.predict(&[25.0, 0.0]) < 0.0); // young
@@ -1283,6 +1304,7 @@ mod tests {
                 vec![4, 3, u32::MAX, u32::MAX, 6, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 2.0])
+            .default_left(vec![0, 0, 0, 0, 0, 0, 0, 0])
             .build()
             .unwrap()
     }

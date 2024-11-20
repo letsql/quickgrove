@@ -14,6 +14,7 @@ pub(crate) struct DTNode {
     pub(crate) feature_index: i32,
     pub(crate) is_leaf: bool,
     pub(crate) split_type: SplitType,
+    pub(crate) default_left: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
