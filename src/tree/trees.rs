@@ -273,14 +273,23 @@ impl FeatureTree {
         let feature_idx = self.feature_offset + node.value.feature_index as usize;
         let split_value = unsafe { *features.get_unchecked(feature_idx) };
 
-        if split_value < node.value.split_value {
-            if let Some(left) = self.tree.get_left_child(node) {
-                self.predict_one(left, features)
+        // For missing values (NaN), use default_left direction
+        // For non-missing values, compare with split_value
+        let go_right = if split_value.is_nan() {
+            // If default_left is 0, go right
+            node.value.default_left == 0
+        } else {
+            split_value >= node.value.split_value
+        };
+
+        if go_right {
+            if let Some(right) = self.tree.get_right_child(node) {
+                self.predict_one(right, features)
             } else {
                 node.value.weight
             }
-        } else if let Some(right) = self.tree.get_right_child(node) {
-            self.predict_one(right, features)
+        } else if let Some(left) = self.tree.get_left_child(node) {
+            self.predict_one(left, features)
         } else {
             node.value.weight
         }
@@ -751,7 +760,7 @@ impl GradientBoostedDecisionTrees {
         let mut feature_values = Vec::with_capacity(num_features);
 
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
-            let values = match (array.data_type(), feature_type) {
+            let values: Vec<f64> = match (array.data_type(), feature_type) {
                 (DataType::Float64, ModelFeatureType::Float) => {
                     let array = array
                         .as_any()
@@ -759,13 +768,30 @@ impl GradientBoostedDecisionTrees {
                         .ok_or_else(|| {
                             ArrowError::InvalidArgumentError("Expected Float64Array".into())
                         })?;
-                    array.values().to_vec()
+
+                    (0..array.len())
+                        .map(|i| {
+                            if array.is_null(i) {
+                                f64::NAN
+                            } else {
+                                array.value(i)
+                            }
+                        })
+                        .collect()
                 }
                 (DataType::Int64, ModelFeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
-                    array.values().iter().map(|&x| x as f64).collect()
+                    (0..array.len())
+                        .map(|i| {
+                            if array.is_null(i) {
+                                f64::NAN
+                            } else {
+                                array.value(i) as f64
+                            }
+                        })
+                        .collect()
                 }
                 (DataType::Boolean, ModelFeatureType::Indicator) => {
                     let array = array
@@ -774,10 +800,16 @@ impl GradientBoostedDecisionTrees {
                         .ok_or_else(|| {
                             ArrowError::InvalidArgumentError("Expected BooleanArray".into())
                         })?;
-                    array
-                        .values()
-                        .iter()
-                        .map(|x| if x { 1.0 } else { 0.0 })
+                    (0..array.len())
+                        .map(|i| {
+                            if array.is_null(i) {
+                                f64::NAN
+                            } else if array.value(i) {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        })
                         .collect()
                 }
                 (actual, expected) => {
