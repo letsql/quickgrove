@@ -11,7 +11,7 @@ use arrow::datatypes::DataType;
 use arrow::datatypes::Float64Type;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
@@ -22,16 +22,12 @@ use thiserror::Error;
 pub enum FeatureTreeError {
     #[error("Feature names must be provided")]
     MissingFeatureNames,
-
     #[error("Feature types must be provided")]
     MissingFeatureTypes,
-
     #[error("Feature names and types must have the same length")]
     LengthMismatch,
-
     #[error("Feature index {0} out of bounds")]
     InvalidFeatureIndex(usize),
-
     #[error("Invalid node structure")]
     InvalidStructure(String),
 }
@@ -48,60 +44,58 @@ enum NodeDefinition {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureTree {
+    #[serde(with = "self::serde_helpers::binary_tree_serde")]
     pub(crate) tree: BinaryTree,
     pub(crate) feature_offset: usize,
+    #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
+    #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_types: Arc<Vec<String>>,
 }
 
-impl Serialize for FeatureTree {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        #[derive(Serialize)]
-        struct FeatureTreeHelper<'a> {
-            nodes: &'a Vec<BinaryTreeNode>,
-            feature_offset: usize,
-            feature_names: &'a Vec<String>,
-            feature_types: &'a Vec<String>,
+mod serde_helpers {
+    pub mod binary_tree_serde {
+        use super::super::*;
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S>(tree: &BinaryTree, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_newtype_struct("BinaryTree", &tree.nodes)
         }
 
-        let helper = FeatureTreeHelper {
-            nodes: &self.tree.nodes,
-            feature_offset: self.feature_offset,
-            feature_names: &self.feature_names,
-            feature_types: &self.feature_types,
-        };
-
-        helper.serialize(serializer)
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<BinaryTree, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let nodes = Vec::deserialize(deserializer)?;
+            Ok(BinaryTree { nodes })
+        }
     }
-}
 
-impl<'de> Deserialize<'de> for FeatureTree {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct FeatureTreeHelper {
-            nodes: Vec<BinaryTreeNode>,
-            feature_offset: usize,
-            feature_names: Vec<String>,
-            feature_types: Vec<String>,
+    pub mod arc_vec_serde {
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+        use std::sync::Arc;
+
+        pub fn serialize<S, T>(arc: &Arc<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+            T: Serialize,
+        {
+            Vec::serialize(arc, serializer)
         }
 
-        let helper = FeatureTreeHelper::deserialize(deserializer)?;
-        Ok(FeatureTree {
-            tree: BinaryTree {
-                nodes: helper.nodes,
-            },
-            feature_offset: helper.feature_offset,
-            feature_names: Arc::new(helper.feature_names),
-            feature_types: Arc::new(helper.feature_types),
-        })
+        pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<Vec<T>>, D::Error>
+        where
+            D: Deserializer<'de>,
+            T: Deserialize<'de>,
+        {
+            let vec = Vec::deserialize(deserializer)?;
+            Ok(Arc::new(vec))
+        }
     }
 }
 
@@ -841,6 +835,348 @@ impl ModelLoader for GradientBoostedDecisionTrees {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::{BooleanArray, Float64Array, Int64Array};
+    use arrow::datatypes::Field;
+    use arrow::datatypes::Schema;
+    use std::sync::Arc;
+
+    fn create_simple_tree() -> Result<FeatureTree, FeatureTreeError> {
+        // Creates a simple decision tree:
+        //          [age < 30]
+        //         /          \
+        //    [-1.0]        [income < 50k]
+        //                  /           \
+        //               [0.0]         [1.0]
+
+        FeatureTreeBuilder::new()
+            .feature_names(vec!["age".to_string(), "income".to_string()])
+            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .split_indices(vec![0, -1, 1, -1, -1])
+            .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
+            .children(
+                vec![1, u32::MAX, 3, u32::MAX, u32::MAX],
+                vec![2, u32::MAX, 4, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
+            .build()
+    }
+
+    fn create_sample_tree() -> FeatureTree {
+        // Create a simple tree:
+        //          [feature0 < 0.5]
+        //         /               \
+        //    [-1.0]               [1.0]
+
+        FeatureTreeBuilder::new()
+            .feature_names(vec!["feature0".to_string()])
+            .feature_types(vec!["numerical".to_string()])
+            .split_indices(vec![0, -1, -1])
+            .split_conditions(vec![0.5, 0.0, 0.0])
+            .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
+            .base_weights(vec![0.0, -1.0, 1.0])
+            .build()
+            .unwrap()
+    }
+
+    fn create_sample_tree_deep() -> FeatureTree {
+        // Create a deeper tree:
+        //                    [feature0 < 0.5]
+        //                   /               \
+        //      [feature1 < 0.3]            [feature1 < 0.6]
+        //     /               \            /               \
+        // [feature2 < 0.7]    [-1.0]    [1.0]       [feature2 < 0.8]
+        //   /        \                                /            \
+        // [-2.0]    [2.0]                          [2.0]         [3.0]
+
+        FeatureTreeBuilder::new()
+            .feature_names(vec![
+                "feature0".to_string(),
+                "feature1".to_string(),
+                "feature2".to_string(),
+            ])
+            .feature_types(vec![
+                "float".to_string(),
+                "float".to_string(),
+                "float".to_string(),
+            ])
+            .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
+            .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])
+            .children(
+                vec![1, 3, 4, u32::MAX, u32::MAX, 7, 8, u32::MAX, u32::MAX],
+                vec![5, 2, 6, u32::MAX, u32::MAX, 6, 8, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, 0.0, 0.0, -1.0, -2.0, 0.0, 2.0, 2.0, 3.0])
+            .build()
+            .unwrap()
+    }
+
+    fn create_sample_record_batch() -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new("age", DataType::Float64, false),
+            Field::new("income", DataType::Float64, false),
+        ]);
+
+        let age_array = Float64Array::from(vec![25.0, 35.0, 35.0, 28.0]);
+        let income_array = Float64Array::from(vec![30000.0, 60000.0, 40000.0, 35000.0]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(age_array), Arc::new(income_array)],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_feature_tree_basic_predictions() -> Result<(), FeatureTreeError> {
+        let tree = create_simple_tree()?;
+
+        // Test various prediction paths
+        assert_eq!(tree.predict(&[25.0, 30000.0]), -1.0); // young age -> left path
+        assert_eq!(tree.predict(&[35.0, 60000.0]), 1.0); // older age, high income -> right path
+        assert_eq!(tree.predict(&[35.0, 40000.0]), 0.0); // older age, low income -> middle path
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_feature_tree_array_predictions() -> Result<(), FeatureTreeError> {
+        let tree = create_simple_tree()?;
+        let batch = create_sample_record_batch();
+
+        let result = tree
+            .predict_arrays(&[batch.column(0).as_ref(), batch.column(1).as_ref()])
+            .unwrap();
+
+        let expected = vec![-1.0, 1.0, 0.0, -1.0];
+        assert_eq!(result.values(), expected.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_feature_tree_serialization() -> Result<(), FeatureTreeError> {
+        let original_tree = create_simple_tree()?;
+
+        // Test serialization
+        let serialized = serde_json::to_string(&original_tree).unwrap();
+        let deserialized: FeatureTree = serde_json::from_str(&serialized).unwrap();
+
+        // Test that predictions are the same after serialization
+        let test_cases = vec![
+            vec![25.0, 30000.0],
+            vec![35.0, 60000.0],
+            vec![35.0, 40000.0],
+        ];
+
+        for test_case in test_cases {
+            assert_eq!(
+                original_tree.predict(&test_case),
+                deserialized.predict(&test_case),
+                "Prediction mismatch for test case: {:?}",
+                test_case
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_feature_tree_builder_validation() {
+        // Test missing feature names
+        let result = FeatureTreeBuilder::new()
+            .feature_types(vec!["numerical".to_string()])
+            .split_indices(vec![0])
+            .split_conditions(vec![30.0])
+            .children(vec![1], vec![2])
+            .base_weights(vec![0.0])
+            .build();
+        assert!(matches!(result, Err(FeatureTreeError::MissingFeatureNames)));
+
+        // Test length mismatch between feature names and types
+        let result = FeatureTreeBuilder::new()
+            .feature_names(vec!["age".to_string()])
+            .feature_types(vec!["numerical".to_string(), "numerical".to_string()])
+            .split_indices(vec![0])
+            .split_conditions(vec![30.0])
+            .children(vec![1], vec![2])
+            .base_weights(vec![0.0])
+            .build();
+        assert!(matches!(result, Err(FeatureTreeError::LengthMismatch)));
+    }
+
+    #[test]
+    fn test_tree_depth_and_size() -> Result<(), FeatureTreeError> {
+        let tree = create_simple_tree()?;
+
+        assert_eq!(tree.depth(), 3); // Root -> Income split -> Leaf
+        assert_eq!(tree.num_nodes(), 5); // 2 internal nodes + 3 leaf nodes
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gbdt_basic() -> Result<(), FeatureTreeError> {
+        let tree1 = create_simple_tree()?;
+        let tree2 = create_simple_tree()?; // Using same tree structure for simplicity
+
+        let gbdt = GradientBoostedDecisionTrees {
+            trees: vec![tree1, tree2],
+            feature_names: Arc::new(vec!["age".to_string(), "income".to_string()]),
+            feature_types: Arc::new(vec!["numerical".to_string(), "numerical".to_string()]),
+            base_score: 0.5,
+            objective: Objective::SquaredError,
+        };
+
+        let batch = create_sample_record_batch();
+        let predictions = gbdt.predict_batch(&batch).unwrap();
+
+        assert_eq!(predictions.len(), 4);
+
+        let expected_values: Vec<f64> = vec![-1.0, 1.0, 0.0, -1.0]
+            .into_iter()
+            .map(|x| 0.5 + 2.0 * x)
+            .collect();
+
+        for (i, &expected) in expected_values.iter().enumerate() {
+            assert!((predictions.value(i) - expected).abs() < 1e-6);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_different_array_types() -> Result<(), FeatureTreeError> {
+        let tree = create_simple_tree()?;
+
+        // Test with different array types
+        let age_array = Int64Array::from(vec![25, 35, 35, 28]);
+        let income_array = BooleanArray::from(vec![false, true, false, false]);
+
+        let result = tree.predict_arrays(&[&age_array, &income_array]).unwrap();
+
+        // Verify predictions work with converted values
+        assert_eq!(result.len(), 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_tree_predict_arrays() {
+        let tree = create_sample_tree();
+
+        let mut builder = Float64Builder::new();
+        builder.append_value(0.3); // left: -1.0
+        builder.append_value(0.7); // right: 1.0
+        builder.append_value(0.5); // right: 1.0
+        builder.append_value(0.0); // left: -1.0
+        builder.append_null(); // default left: -1.0
+        let array = Arc::new(builder.finish());
+        let array_ref: &dyn Array = array.as_ref();
+
+        let predictions = tree.predict_arrays(&[array_ref]).unwrap();
+
+        assert_eq!(predictions.len(), 5);
+        assert_eq!(predictions.value(0), -1.0); // 0.3 < 0.5 -> left
+        assert_eq!(predictions.value(1), 1.0); // 0.7 >= 0.5 -> right
+        assert_eq!(predictions.value(2), 1.0); // 0.5 >= 0.5 -> right
+        assert_eq!(predictions.value(3), -1.0); // 0.0 < 0.5 -> left
+        assert_eq!(predictions.value(4), -1.0); // default left (this needs to be fixed since
+                                                // default values should come from default_true array in the model json)
+    }
+
+    #[test]
+    fn test_pruning() -> Result<(), FeatureTreeError> {
+        let tree = create_simple_tree()?;
+
+        // Create a predicate that forces age >= 30
+        let mut conditions = HashMap::new();
+        conditions.insert("age".to_string(), vec![Condition::GreaterThanOrEqual(30.0)]);
+        let predicate = Predicate { conditions };
+
+        // Prune the tree
+        let pruned_tree = tree.prune(&predicate, &tree.feature_names).unwrap();
+
+        // After pruning, all predictions should follow the right path
+        let test_cases = vec![
+            vec![25.0, 30000.0], // Would have gone left in original tree
+            vec![35.0, 60000.0],
+            vec![35.0, 40000.0],
+        ];
+
+        for test_case in test_cases {
+            let prediction = pruned_tree.predict(&test_case);
+            assert!(
+                prediction == 0.0 || prediction == 1.0,
+                "Prediction {} should only follow right path",
+                prediction
+            );
+        }
+
+        Ok(())
+    }
+    #[test]
+    fn test_tree_prune() {
+        let tree = create_sample_tree();
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
+        let pruned_tree = tree.prune(&predicate, &["feature0".to_string()]).unwrap();
+        assert_eq!(pruned_tree.tree.nodes.len(), 1);
+        assert_eq!(pruned_tree.tree.get_node(0).unwrap().value.weight, -1.0);
+    }
+
+    #[test]
+    fn test_tree_prune_deep() {
+        let tree = create_sample_tree_deep();
+        let feature_names = [
+            "feature0".to_string(),
+            "feature1".to_string(),
+            "feature2".to_string(),
+        ];
+
+        // Test case 1: Prune right subtree of root
+        let mut predicate1 = Predicate::new();
+        predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.29));
+        let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
+        assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 2.0);
+
+        // Test case 2: Prune left subtree of left child of root
+        let mut predicate2 = Predicate::new();
+        predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.70));
+        let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
+        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -2.0);
+
+        // Test case 3: Prune left root tree
+        let mut predicate3 = Predicate::new();
+        predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
+        let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
+        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 3.0);
+    }
+
+    #[test]
+    fn test_tree_prune_multiple_conditions() {
+        let tree = create_sample_tree_deep();
+        let feature_names = vec![
+            "feature0".to_string(),
+            "feature1".to_string(),
+            "feature2".to_string(),
+        ];
+
+        // Test case 1: Multiple conditions affecting right path
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
+        predicate.add_condition("feature1".to_string(), Condition::LessThan(0.4));
+        let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
+        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 2.0);
+        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
+
+        // Test case 2: Multiple conditions affecting left path
+        let mut predicate = Predicate::new();
+        predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
+        predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
+        let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
+        assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), 3.0);
+        assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -1.0);
+    }
 
     #[test]
     fn test_xgboost_style_builder() -> Result<(), FeatureTreeError> {
