@@ -18,7 +18,7 @@ pub fn read_diamonds_csv_to_split_batches(
     let file = File::open(path)?;
     let schema = Arc::new(Schema::new(vec![
         Field::new("carat", DataType::Float64, false),
-        Field::new("depth", DataType::Float64, false),
+        Field::new("depth", DataType::Float64, true),
         Field::new("table", DataType::Float64, false),
         Field::new("x", DataType::Float64, false),
         Field::new("y", DataType::Float64, false),

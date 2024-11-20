@@ -2,6 +2,7 @@ from typing import Optional, Literal, Dict, Any, Tuple, List, Type
 from pathlib import Path
 import argparse
 import attrs
+import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.preprocessing import LabelEncoder
@@ -73,7 +74,7 @@ class ObjectiveConfig:
 
     @property
     def num_parallel_trees(self) -> int:
-        return 10
+        return 1
 
     @property
     def num_boost_rounds(self) -> int:
@@ -152,7 +153,6 @@ class OutputPaths:
                 f"{self.dataset_name}_metadata_{self.model_suffix}.json")
 
     def ensure_directories(self) -> None:
-        """Create necessary directories for all paths."""
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -198,7 +198,11 @@ class DiamondsProcessor(DataProcessor):
     def load_data(self) -> pd.DataFrame:
         if not self.config.data_path.exists():
             raise FileNotFoundError(f"Data file not found: {self.config.data_path}")
-        return pd.read_csv(self.config.data_path)
+        df = pd.read_csv(self.config.data_path)
+        # Introduce 20% missing values in carat column
+        missing_mask = np.random.choice([True, False], size=len(df), p=[0.2, 0.8])
+        df.loc[missing_mask, 'depth'] = np.nan
+        return df
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         # if self.config.filter_predicate:
