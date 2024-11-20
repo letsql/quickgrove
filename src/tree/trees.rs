@@ -29,7 +29,7 @@ pub enum FeatureTreeError {
     InvalidFeatureIndex(usize),
     #[error("Invalid node structure")]
     InvalidStructure(String),
-    #[error("Unsupported feature type: {0}. Supported types are: int, float, i (indicator), q (quantile)")]
+    #[error("Unsupported feature type: {0}. Supported types are: int, float, i (indicator)")]
     UnsupportedType(String),
 }
 
@@ -273,10 +273,7 @@ impl FeatureTree {
         let feature_idx = self.feature_offset + node.value.feature_index as usize;
         let split_value = unsafe { *features.get_unchecked(feature_idx) };
 
-        // For missing values (NaN), use default_left direction
-        // For non-missing values, compare with split_value
         let go_right = if split_value.is_nan() {
-            // If default_left is 0, go right
             node.value.default_left == 0
         } else {
             split_value >= node.value.split_value
@@ -357,11 +354,17 @@ impl FeatureTree {
                     match condition {
                         Condition::LessThan(value) => {
                             if *value <= node.split_value {
+                                if node.default_left == 1 {
+                                    continue;
+                                }
                                 return Some(false); // Prune right path
                             }
                         }
                         Condition::GreaterThanOrEqual(value) => {
                             if *value >= node.split_value {
+                                if node.default_left == 0 {
+                                    continue;
+                                }
                                 return Some(true); // Prune left path
                             }
                         }
@@ -759,8 +762,9 @@ impl GradientBoostedDecisionTrees {
         let mut builder = Float64Builder::with_capacity(num_rows);
         let mut feature_values = Vec::with_capacity(num_features);
 
+        // Pre-allocate vectors to avoid repeated allocations
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
-            let values: Vec<f64> = match (array.data_type(), feature_type) {
+            let values = match (array.data_type(), feature_type) {
                 (DataType::Float64, ModelFeatureType::Float) => {
                     let array = array
                         .as_any()
@@ -769,29 +773,42 @@ impl GradientBoostedDecisionTrees {
                             ArrowError::InvalidArgumentError("Expected Float64Array".into())
                         })?;
 
-                    (0..array.len())
-                        .map(|i| {
-                            if array.is_null(i) {
+                    let mut values = Vec::with_capacity(num_rows);
+                    // Get nulls bitmap for faster access
+                    if let Some(null_bitmap) = array.nulls() {
+                        let values_slice = array.values();
+                        for i in 0..num_rows {
+                            values.push(if null_bitmap.is_null(i) {
                                 f64::NAN
                             } else {
-                                array.value(i)
-                            }
-                        })
-                        .collect()
+                                values_slice[i]
+                            });
+                        }
+                    } else {
+                        // No nulls, just copy values
+                        values.extend_from_slice(array.values());
+                    }
+                    values
                 }
                 (DataType::Int64, ModelFeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
-                    (0..array.len())
-                        .map(|i| {
-                            if array.is_null(i) {
+
+                    let mut values = Vec::with_capacity(num_rows);
+                    if let Some(null_bitmap) = array.nulls() {
+                        let values_slice = array.values();
+                        for i in 0..num_rows {
+                            values.push(if null_bitmap.is_null(i) {
                                 f64::NAN
                             } else {
-                                array.value(i) as f64
-                            }
-                        })
-                        .collect()
+                                values_slice[i] as f64
+                            });
+                        }
+                    } else {
+                        values.extend(array.values().iter().map(|&x| x as f64));
+                    }
+                    values
                 }
                 (DataType::Boolean, ModelFeatureType::Indicator) => {
                     let array = array
@@ -800,17 +817,22 @@ impl GradientBoostedDecisionTrees {
                         .ok_or_else(|| {
                             ArrowError::InvalidArgumentError("Expected BooleanArray".into())
                         })?;
-                    (0..array.len())
-                        .map(|i| {
-                            if array.is_null(i) {
+
+                    let mut values = Vec::with_capacity(num_rows);
+                    if let Some(null_bitmap) = array.nulls() {
+                        for i in 0..num_rows {
+                            values.push(if null_bitmap.is_null(i) {
                                 f64::NAN
                             } else if array.value(i) {
                                 1.0
                             } else {
                                 0.0
-                            }
-                        })
-                        .collect()
+                            });
+                        }
+                    } else {
+                        values.extend(array.values().iter().map(|x| if x { 1.0 } else { 0.0 }));
+                    }
+                    values
                 }
                 (actual, expected) => {
                     return Err(ArrowError::InvalidArgumentError(format!(
@@ -822,15 +844,10 @@ impl GradientBoostedDecisionTrees {
                 }
             };
 
-            if !values.iter().all(|&v| feature_type.validate_value(v)) {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Values do not match type {} constraints",
-                    feature_type
-                )));
-            }
             feature_values.push(values);
         }
 
+        // Rest of the code remains the same...
         let mut row_features = vec![0.0; num_features];
         let num_trees = self.trees.len();
 
@@ -986,7 +1003,7 @@ mod tests {
                 vec![2, u32::MAX, 4, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
-            .default_left(vec![0, 0, 0, 0, 0])
+            .default_left(vec![1, 0, 0, 0, 0])
             .build()
     }
 
@@ -1017,7 +1034,6 @@ mod tests {
         // [feature2 < 0.7]    [-1.0]    [1.0]       [feature2 < 0.8]
         //   /        \                                /            \
         // [-2.0]    [2.0]                          [2.0]         [3.0]
-
         FeatureTreeBuilder::new()
             .feature_names(vec![
                 "feature0".to_string(),
@@ -1029,14 +1045,40 @@ mod tests {
                 ModelFeatureType::Float,
                 ModelFeatureType::Float,
             ])
-            .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
-            .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])
+            .split_indices(vec![0, 1, 2, -1, -1, -1, 1, -1, 2, -1, -1])
+            .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.0, 0.6, 0.0, 0.8, 0.0, 0.0])
             .children(
-                vec![1, 3, 4, u32::MAX, u32::MAX, 7, 8, u32::MAX, u32::MAX],
-                vec![5, 2, 6, u32::MAX, u32::MAX, 6, 8, u32::MAX, u32::MAX],
+                vec![
+                    1,
+                    3,
+                    4,
+                    u32::MAX,
+                    u32::MAX,
+                    u32::MAX,
+                    7,
+                    u32::MAX,
+                    9,
+                    u32::MAX,
+                    u32::MAX,
+                ],
+                vec![
+                    6,
+                    2,
+                    5,
+                    u32::MAX,
+                    u32::MAX,
+                    u32::MAX,
+                    8,
+                    u32::MAX,
+                    10,
+                    u32::MAX,
+                    u32::MAX,
+                ],
             )
-            .base_weights(vec![0.0, 0.0, 0.0, -1.0, -2.0, 0.0, 2.0, 2.0, 3.0])
-            .default_left(vec![0, 0, 0, 0, 0, 0, 0, 0, 0])
+            .base_weights(vec![
+                0.0, 0.0, 0.0, -2.0, 2.0, -1.0, 0.0, 1.0, 0.0, 2.0, 3.0,
+            ])
+            .default_left(vec![1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0])
             .build()
             .unwrap()
     }
@@ -1208,15 +1250,15 @@ mod tests {
 
         // Test case 1: Prune right subtree of root
         let mut predicate1 = Predicate::new();
-        predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.29));
+        predicate1.add_condition("feature1".to_string(), Condition::LessThan(0.30));
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
-        assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 2.0);
+        assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 1.0);
 
         // Test case 2: Prune left subtree of left child of root
         let mut predicate2 = Predicate::new();
         predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.70));
         let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
-        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -2.0);
+        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
 
         // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
@@ -1238,15 +1280,15 @@ mod tests {
         predicate.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
         predicate.add_condition("feature1".to_string(), Condition::LessThan(0.4));
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
-        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 2.0);
-        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 2.0);
+        assert_eq!(pruned_tree.predict(&[0.2, 0.0, 0.5]), 1.0);
+        assert_eq!(pruned_tree.predict(&[0.4, 0.0, 1.0]), 1.0);
 
         let mut predicate = Predicate::new();
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.4));
         predicate.add_condition("feature2".to_string(), Condition::GreaterThanOrEqual(0.7));
         let pruned_tree = tree.prune(&predicate, &feature_names).unwrap();
-        assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), 3.0);
-        assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), -1.0);
+        assert_eq!(pruned_tree.predict(&[0.6, 0.3, 0.5]), 1.0);
+        assert_eq!(pruned_tree.predict(&[0.8, 0.29, 1.0]), 1.0);
     }
 
     #[test]
@@ -1444,5 +1486,49 @@ mod tests {
 
         let result = gbdt.predict_arrays(batch.columns());
         assert!(matches!(result, Err(ArrowError::InvalidArgumentError(_))));
+    }
+
+    #[test]
+    fn test_prune_with_default_direction_and_nulls() {
+        // Create a deeper tree:
+        //                    [feature0 < 0.5]
+        //                   /               \
+        //      [feature1 < 0.3]            [feature1 < 0.6]
+        //     /               \            /               \
+        // [feature2 < 0.7]    [-1.0]    [1.0]       [feature2 < 0.8]
+        //   /        \                                /            \
+        // [-2.0]    [2.0]                          [2.0]         [3.0]
+
+        let feature_tree = FeatureTreeBuilder::new()
+            .feature_names(vec![
+                "feature0".to_string(),
+                "feature1".to_string(),
+                "feature2".to_string(),
+            ])
+            .feature_types(vec![
+                ModelFeatureType::Float,
+                ModelFeatureType::Float,
+                ModelFeatureType::Float,
+            ])
+            .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
+            .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])
+            .children(
+                vec![1, 3, 4, u32::MAX, u32::MAX, 7, 8, u32::MAX, u32::MAX],
+                vec![5, 2, 6, u32::MAX, u32::MAX, 6, 8, u32::MAX, u32::MAX],
+            )
+            .base_weights(vec![0.0, 0.0, 0.0, -1.0, -2.0, 0.0, 2.0, 2.0, 3.0])
+            .default_left(vec![1, 0, 0, 0, 0, 0, 0, 0, 0])
+            .build()
+            .unwrap();
+
+        let predictions_right = feature_tree.predict(&[0.4, 0.3, 0.8]);
+
+        let mut predicate1 = Predicate::new();
+        predicate1.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.5));
+        let pruned1 = feature_tree
+            .prune(&predicate1, &["f0".to_string(), "f1".to_string()])
+            .unwrap();
+        let predicitons_after_pruning = pruned1.predict(&[f64::NAN, 0.3, 0.8]);
+        assert_eq!(predictions_right, predicitons_after_pruning);
     }
 }

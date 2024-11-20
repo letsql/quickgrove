@@ -9,12 +9,12 @@ pub enum SplitType {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[repr(C)]
 pub(crate) struct DTNode {
-    pub(crate) weight: f64,
     pub(crate) split_value: f64,
+    pub(crate) weight: f64,
     pub(crate) feature_index: i32,
     pub(crate) is_leaf: bool,
-    pub(crate) split_type: SplitType,
     pub(crate) default_left: i32,
+    pub(crate) split_type: SplitType,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
