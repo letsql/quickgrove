@@ -9,6 +9,7 @@ use std::any::Any;
 use std::error::Error;
 use std::sync::Arc;
 use trusty::loader::ModelLoader;
+use trusty::tree::ModelFeatureType;
 use trusty::GradientBoostedDecisionTrees;
 
 const MODEL_JSON: &str = r#"{
@@ -28,7 +29,8 @@ const MODEL_JSON: &str = r#"{
                         "split_conditions": [0.5, 0.0, 0.0],
                         "left_children": [1, 4294967295, 4294967295],
                         "right_children": [2, 4294967295, 4294967295],
-                        "base_weights": [0.0, -1.0, 1.0]
+                        "base_weights": [0.0, -1.0, 1.0],
+                        "default_left": [0, 0, 0]
                     }
                 ]
             }
@@ -50,11 +52,10 @@ impl TrustyUDF {
             GradientBoostedDecisionTrees::load_from_json(&model_data)?;
         let mut arg_types = Vec::new();
         for feature_types in model.feature_types.iter() {
-            match feature_types.as_str() {
-                "float" => arg_types.push(DataType::Float64),
-                "int" => arg_types.push(DataType::Int64),
-                "i" => arg_types.push(DataType::Boolean),
-                _ => todo!(),
+            match feature_types {
+                ModelFeatureType::Float => arg_types.push(DataType::Float64),
+                ModelFeatureType::Int => arg_types.push(DataType::Int64),
+                ModelFeatureType::Indicator => arg_types.push(DataType::Boolean),
             }
         }
         Ok(Self {
