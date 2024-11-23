@@ -258,37 +258,36 @@ impl FeatureTree {
 
     #[inline(always)]
     pub fn predict(&self, features: &[f64]) -> f64 {
-        let root = self
-            .tree
-            .get_node(self.tree.get_root_index())
-            .expect("Tree should have root node");
-        self.predict_one(root, features)
-    }
-
-    fn predict_one(&self, node: &BinaryTreeNode, features: &[f64]) -> f64 {
-        if node.value.is_leaf {
-            return node.value.weight;
-        }
-
-        let feature_idx = self.feature_offset + node.value.feature_index as usize;
-        let split_value = unsafe { *features.get_unchecked(feature_idx) };
-
-        let go_right = if split_value.is_nan() {
-            node.value.default_left == 0
-        } else {
-            split_value >= node.value.split_value
+        let mut current = match self.tree.get_node(self.tree.get_root_index()) {
+            Some(node) => node,
+            None => return 0.0, // or some other default value
         };
 
-        if go_right {
-            if let Some(right) = self.tree.get_right_child(node) {
-                self.predict_one(right, features)
-            } else {
-                node.value.weight
+        loop {
+            if current.value.is_leaf {
+                return current.value.weight;
             }
-        } else if let Some(left) = self.tree.get_left_child(node) {
-            self.predict_one(left, features)
-        } else {
-            node.value.weight
+
+            let feature_idx = self.feature_offset + current.value.feature_index as usize;
+            let split_value = features[feature_idx];
+
+            let go_right = if split_value.is_nan() {
+                current.value.default_left == 0
+            } else {
+                split_value >= current.value.split_value
+            };
+
+            current = if go_right {
+                match self.tree.get_right_child(current) {
+                    Some(node) => node,
+                    None => return current.value.weight,
+                }
+            } else {
+                match self.tree.get_left_child(current) {
+                    Some(node) => node,
+                    None => return current.value.weight,
+                }
+            };
         }
     }
 
@@ -847,7 +846,6 @@ impl GradientBoostedDecisionTrees {
             feature_values.push(values);
         }
 
-        // Rest of the code remains the same...
         let mut row_features = vec![0.0; num_features];
         let num_trees = self.trees.len();
 
