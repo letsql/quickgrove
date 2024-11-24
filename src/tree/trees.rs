@@ -3,7 +3,7 @@ use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::SplitType;
 
-use super::binary_tree::{BinaryTree, BinaryTreeNode, DTNode};
+use super::binary_tree::{BinaryTree, SplitData, TreeNode};
 use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
@@ -126,7 +126,7 @@ enum NodeDefinition {
     },
     Split {
         feature_index: i32,
-        default_left: i32,
+        default_left: bool,
         split_value: f64,
         left: usize,
         right: usize,
@@ -193,7 +193,7 @@ impl fmt::Display for FeatureTree {
         fn fmt_node(
             f: &mut fmt::Formatter<'_>,
             tree: &FeatureTree,
-            node: &BinaryTreeNode,
+            node: &TreeNode,
             prefix: &str,
             is_left: bool,
             feature_names: &[String],
@@ -221,11 +221,7 @@ impl fmt::Display for FeatureTree {
             Ok(())
         }
 
-        fn node_to_string(
-            node: &BinaryTreeNode,
-            tree: &FeatureTree,
-            feature_names: &[String],
-        ) -> String {
+        fn node_to_string(node: &TreeNode, tree: &FeatureTree, feature_names: &[String]) -> String {
             if node.value.is_leaf {
                 format!("Leaf (weight: {:.4})", node.value.weight)
             } else {
@@ -272,7 +268,7 @@ impl FeatureTree {
             let split_value = features[feature_idx];
 
             let go_right = if split_value.is_nan() {
-                current.value.default_left == 0
+                !current.value.default_left
             } else {
                 split_value >= current.value.split_value
             };
@@ -292,7 +288,7 @@ impl FeatureTree {
     }
 
     pub fn depth(&self) -> usize {
-        fn recursive_depth(tree: &BinaryTree, node: &BinaryTreeNode) -> usize {
+        fn recursive_depth(tree: &BinaryTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -315,7 +311,7 @@ impl FeatureTree {
     }
 
     pub fn num_nodes(&self) -> usize {
-        fn count_reachable_nodes(tree: &BinaryTree, node: &BinaryTreeNode) -> usize {
+        fn count_reachable_nodes(tree: &BinaryTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -348,12 +344,12 @@ impl FeatureTree {
         new_tree.feature_offset = self.feature_offset;
 
         if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
-            fn should_prune_direction(node: &DTNode, conditions: &[Condition]) -> Option<bool> {
+            fn should_prune_direction(node: &SplitData, conditions: &[Condition]) -> Option<bool> {
                 for condition in conditions {
                     match condition {
                         Condition::LessThan(value) => {
                             if *value <= node.split_value {
-                                if node.default_left == 1 {
+                                if node.default_left {
                                     continue;
                                 }
                                 return Some(false); // Prune right path
@@ -361,7 +357,7 @@ impl FeatureTree {
                         }
                         Condition::GreaterThanOrEqual(value) => {
                             if *value >= node.split_value {
-                                if node.default_left == 0 {
+                                if !node.default_left {
                                     continue;
                                 }
                                 return Some(true); // Prune left path
@@ -375,7 +371,7 @@ impl FeatureTree {
             fn prune_recursive(
                 old_tree: &BinaryTree,
                 new_tree: &mut BinaryTree,
-                node: &BinaryTreeNode,
+                node: &TreeNode,
                 feature_offset: usize,
                 feature_names: &[String],
                 predicate: &Predicate,
@@ -415,14 +411,14 @@ impl FeatureTree {
                 }
 
                 let current_idx = if let Some(parent_idx) = parent_idx {
-                    let new_tree_node = BinaryTreeNode::new(new_node);
+                    let new_tree_node = TreeNode::new(new_node);
                     if is_left {
                         new_tree.add_left_node(parent_idx, new_tree_node)
                     } else {
                         new_tree.add_right_node(parent_idx, new_tree_node)
                     }
                 } else {
-                    new_tree.add_root(BinaryTreeNode::new(new_node))
+                    new_tree.add_root(TreeNode::new(new_node))
                 };
 
                 if !node.value.is_leaf {
@@ -512,7 +508,7 @@ impl FeatureTree {
                     default_left,
                     ..
                 } => {
-                    let node = DTNode {
+                    let node = SplitData {
                         feature_index: *feature_index,
                         split_value: *split_value,
                         weight: 0.0,
@@ -529,13 +525,13 @@ impl FeatureTree {
                 }
 
                 NodeDefinition::Leaf { weight } => {
-                    let node = DTNode {
+                    let node = SplitData {
                         feature_index: -1,
                         split_value: 0.0,
                         weight: *weight,
                         is_leaf: true,
                         split_type: SplitType::Numerical,
-                        default_left: 0,
+                        default_left: false,
                     };
 
                     if builder_idx == 0 {
@@ -601,7 +597,7 @@ pub struct FeatureTreeBuilder {
     left_children: Vec<u32>,
     right_children: Vec<u32>,
     base_weights: Vec<f64>,
-    default_left: Vec<i32>,
+    default_left: Vec<bool>,
 }
 
 impl FeatureTreeBuilder {
@@ -669,7 +665,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn default_left(self, indices: Vec<i32>) -> Self {
+    pub fn default_left(self, indices: Vec<bool>) -> Self {
         Self {
             default_left: indices,
             ..self
@@ -1001,7 +997,7 @@ mod tests {
                 vec![2, u32::MAX, 4, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
-            .default_left(vec![1, 0, 0, 0, 0])
+            .default_left(vec![true, false, false, false, false])
             .build()
     }
 
@@ -1018,7 +1014,7 @@ mod tests {
             .split_conditions(vec![0.5, 0.0, 0.0])
             .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
             .base_weights(vec![0.0, -1.0, 1.0])
-            .default_left(vec![0, 0, 0])
+            .default_left(vec![false, false, false])
             .build()
             .unwrap()
     }
@@ -1076,7 +1072,9 @@ mod tests {
             .base_weights(vec![
                 0.0, 0.0, 0.0, -2.0, 2.0, -1.0, 0.0, 1.0, 0.0, 2.0, 3.0,
             ])
-            .default_left(vec![1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0])
+            .default_left(vec![
+                true, true, true, false, false, true, false, false, true, false, false,
+            ])
             .build()
             .unwrap()
     }
@@ -1143,7 +1141,7 @@ mod tests {
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
-            .default_left(vec![0])
+            .default_left(vec![false])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::MissingFeatureNames)));
 
@@ -1155,7 +1153,7 @@ mod tests {
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
             .base_weights(vec![0.0])
-            .default_left(vec![0])
+            .default_left(vec![false])
             .build();
         assert!(matches!(result, Err(FeatureTreeError::LengthMismatch)));
     }
@@ -1308,7 +1306,7 @@ mod tests {
                 vec![2, u32::MAX, 4, u32::MAX, u32::MAX], // right children
             )
             .base_weights(vec![0.0, -1.0, 0.0, 0.0, 1.0])
-            .default_left(vec![0, 0, 0, 0, 0])
+            .default_left(vec![false, false, false, false, false])
             .build()?;
 
         assert!(tree.predict(&[25.0, 0.0]) < 0.0); // young
@@ -1376,7 +1374,7 @@ mod tests {
                 vec![4, 3, u32::MAX, u32::MAX, 6, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 2.0])
-            .default_left(vec![0, 0, 0, 0, 0, 0, 0, 0])
+            .default_left(vec![false, false, false, false, false, false, false, false])
             .build()
             .unwrap()
     }
@@ -1515,7 +1513,9 @@ mod tests {
                 vec![5, 2, 6, u32::MAX, u32::MAX, 6, 8, u32::MAX, u32::MAX],
             )
             .base_weights(vec![0.0, 0.0, 0.0, -1.0, -2.0, 0.0, 2.0, 2.0, 3.0])
-            .default_left(vec![1, 0, 0, 0, 0, 0, 0, 0, 0])
+            .default_left(vec![
+                true, false, false, false, false, false, false, false, false,
+            ])
             .build()
             .unwrap();
 

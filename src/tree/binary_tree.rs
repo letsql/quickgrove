@@ -1,33 +1,32 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Serialize)]
-#[repr(u8)]
 pub enum SplitType {
     Numerical = 0,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[repr(C)]
-pub(crate) struct DTNode {
+pub(crate) struct SplitData {
     pub(crate) split_value: f64,
     pub(crate) weight: f64,
     pub(crate) feature_index: i32,
     pub(crate) is_leaf: bool,
-    pub(crate) default_left: i32,
+    pub(crate) default_left: bool,
     pub(crate) split_type: SplitType,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct BinaryTreeNode {
-    pub(crate) value: DTNode,
+pub(crate) struct TreeNode {
+    pub(crate) value: SplitData,
     pub(crate) index: usize,
     pub(crate) left: usize,
     pub(crate) right: usize,
 }
 
-impl BinaryTreeNode {
-    pub fn new(value: DTNode) -> Self {
-        BinaryTreeNode {
+impl TreeNode {
+    pub fn new(value: SplitData) -> Self {
+        TreeNode {
             value,
             index: 0,
             left: 0,
@@ -36,9 +35,9 @@ impl BinaryTreeNode {
     }
 }
 
-impl From<DTNode> for BinaryTreeNode {
-    fn from(node: DTNode) -> Self {
-        BinaryTreeNode {
+impl From<SplitData> for TreeNode {
+    fn from(node: SplitData) -> Self {
+        TreeNode {
             value: node,
             index: 0,
             left: 0,
@@ -49,7 +48,7 @@ impl From<DTNode> for BinaryTreeNode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BinaryTree {
-    pub(crate) nodes: Vec<BinaryTreeNode>,
+    pub(crate) nodes: Vec<TreeNode>,
 }
 
 impl BinaryTree {
@@ -65,16 +64,16 @@ impl BinaryTree {
         0
     }
 
-    pub(crate) fn get_node(&self, index: usize) -> Option<&BinaryTreeNode> {
+    pub(crate) fn get_node(&self, index: usize) -> Option<&TreeNode> {
         self.nodes.get(index)
     }
 
     #[allow(dead_code)]
-    pub(crate) fn get_node_mut(&mut self, index: usize) -> Option<&mut BinaryTreeNode> {
+    pub(crate) fn get_node_mut(&mut self, index: usize) -> Option<&mut TreeNode> {
         self.nodes.get_mut(index)
     }
 
-    pub(crate) fn get_left_child(&self, node: &BinaryTreeNode) -> Option<&BinaryTreeNode> {
+    pub(crate) fn get_left_child(&self, node: &TreeNode) -> Option<&TreeNode> {
         if node.left == 0 {
             None
         } else {
@@ -82,7 +81,7 @@ impl BinaryTree {
         }
     }
 
-    pub(crate) fn get_right_child(&self, node: &BinaryTreeNode) -> Option<&BinaryTreeNode> {
+    pub(crate) fn get_right_child(&self, node: &TreeNode) -> Option<&TreeNode> {
         if node.right == 0 {
             None
         } else {
@@ -90,14 +89,14 @@ impl BinaryTree {
         }
     }
 
-    pub(crate) fn add_root(&mut self, mut root: BinaryTreeNode) -> usize {
+    pub(crate) fn add_root(&mut self, mut root: TreeNode) -> usize {
         let index = self.nodes.len();
         root.index = index;
         self.nodes.push(root);
         index
     }
 
-    pub(crate) fn add_left_node(&mut self, parent: usize, mut child: BinaryTreeNode) -> usize {
+    pub(crate) fn add_left_node(&mut self, parent: usize, mut child: TreeNode) -> usize {
         let index = self.nodes.len();
         child.index = index;
         self.nodes.push(child);
@@ -108,7 +107,7 @@ impl BinaryTree {
         index
     }
 
-    pub(crate) fn add_right_node(&mut self, parent: usize, mut child: BinaryTreeNode) -> usize {
+    pub(crate) fn add_right_node(&mut self, parent: usize, mut child: TreeNode) -> usize {
         let index = self.nodes.len();
         child.index = index;
         self.nodes.push(child);
@@ -124,7 +123,7 @@ impl BinaryTree {
         self.nodes.len()
     }
 
-    pub(crate) fn add_orphan_node(&mut self, node: BinaryTreeNode) -> usize {
+    pub(crate) fn add_orphan_node(&mut self, node: TreeNode) -> usize {
         let idx = self.nodes.len();
         self.nodes.push(node);
         idx
