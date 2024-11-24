@@ -22,8 +22,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Regular tree prediction successful");
 
     let mut predicate = Predicate::new();
-    predicate.add_condition("carat".to_string(), Condition::GreaterThanOrEqual(3.0));
-    predicate.add_condition("depth".to_string(), Condition::LessThan(65.0));
+    predicate.add_condition("carat".to_string(), Condition::LessThan(1.0));
+    predicate.add_condition("depth".to_string(), Condition::GreaterThanOrEqual(61.0));
 
     let pruned_trees = trees.prune(&predicate);
     let pruned_predictions: PrimitiveArray<Float64Type> = pruned_trees.predict_batch(&batch)?;
@@ -84,7 +84,7 @@ fn create_record_batch() -> Result<RecordBatch, Box<dyn Error>> {
     let batch = RecordBatch::try_new(
         schema,
         vec![
-            Arc::new(Float64Array::from(vec![2.35])),
+            Arc::new(Float64Array::from(vec![0.2])),
             Arc::new(Float64Array::from(vec![61.5])),
             Arc::new(Float64Array::from(vec![55.0])),
             Arc::new(Float64Array::from(vec![3.95])),
