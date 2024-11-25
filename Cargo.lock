@@ -2795,6 +2795,7 @@ dependencies = [
  "criterion",
  "gbdt",
  "prettytable",
+ "rand",
  "rayon",
  "serde",
  "serde_json",
