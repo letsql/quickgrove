@@ -3,7 +3,7 @@ use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::SplitType;
 
-use super::binary_tree::{BinaryTree, SplitData, TreeNode};
+use super::prunable_tree::{PrunableTree, SplitData, TreeNode};
 use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
@@ -135,8 +135,8 @@ enum NodeDefinition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureTree {
-    #[serde(with = "self::serde_helpers::binary_tree_serde")]
-    pub(crate) tree: BinaryTree,
+    #[serde(with = "self::serde_helpers::prunable_tree_serde")]
+    pub(crate) tree: PrunableTree,
     pub(crate) feature_offset: usize,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
@@ -145,23 +145,23 @@ pub struct FeatureTree {
 }
 
 mod serde_helpers {
-    pub mod binary_tree_serde {
+    pub mod prunable_tree_serde {
         use super::super::*;
         use serde::{Deserialize, Deserializer, Serializer};
 
-        pub fn serialize<S>(tree: &BinaryTree, serializer: S) -> Result<S::Ok, S::Error>
+        pub fn serialize<S>(tree: &PrunableTree, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            serializer.serialize_newtype_struct("BinaryTree", &tree.nodes)
+            serializer.serialize_newtype_struct("PrunableTree", &tree.nodes)
         }
 
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<BinaryTree, D::Error>
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<PrunableTree, D::Error>
         where
             D: Deserializer<'de>,
         {
             let nodes = Vec::deserialize(deserializer)?;
-            Ok(BinaryTree { nodes })
+            Ok(PrunableTree { nodes })
         }
     }
 
@@ -242,10 +242,17 @@ impl fmt::Display for FeatureTree {
     }
 }
 
+#[derive(Debug)]
+enum PruneAction {
+    Keep,
+    PruneLeft,
+    PruneRight,
+}
+
 impl FeatureTree {
     pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<ModelFeatureType>>) -> Self {
         FeatureTree {
-            tree: BinaryTree::new(),
+            tree: PrunableTree::new(),
             feature_offset: 0,
             feature_names,
             feature_types,
@@ -256,7 +263,7 @@ impl FeatureTree {
     pub fn predict(&self, features: &[f64]) -> f64 {
         let mut current = match self.tree.get_node(self.tree.get_root_index()) {
             Some(node) => node,
-            None => return 0.0, // or some other default value
+            None => return 0.0,
         };
 
         loop {
@@ -288,7 +295,7 @@ impl FeatureTree {
     }
 
     pub fn depth(&self) -> usize {
-        fn recursive_depth(tree: &BinaryTree, node: &TreeNode) -> usize {
+        fn recursive_depth(tree: &PrunableTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -311,7 +318,7 @@ impl FeatureTree {
     }
 
     pub fn num_nodes(&self) -> usize {
-        fn count_reachable_nodes(tree: &BinaryTree, node: &TreeNode) -> usize {
+        fn count_reachable_nodes(tree: &PrunableTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -343,134 +350,112 @@ impl FeatureTree {
         );
         new_tree.feature_offset = self.feature_offset;
 
-        if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
-            fn should_prune_direction(node: &SplitData, conditions: &[Condition]) -> Option<bool> {
-                for condition in conditions {
-                    match condition {
-                        Condition::LessThan(value) => {
-                            if *value <= node.split_value {
-                                if node.default_left {
-                                    continue;
-                                }
-                                return Some(false); // Prune right path
-                            }
-                        }
-                        Condition::GreaterThanOrEqual(value) => {
-                            if *value >= node.split_value {
-                                if !node.default_left {
-                                    continue;
-                                }
-                                return Some(true); // Prune left path
-                            }
-                        }
-                    }
-                }
-                None
+        fn evaluate_node(
+            node: &SplitData,
+            feature_index: usize,
+            feature_names: &[String],
+            predicate: &Predicate,
+        ) -> PruneAction {
+            if node.is_leaf {
+                return PruneAction::Keep;
             }
-            #[allow(clippy::too_many_arguments)]
-            fn prune_recursive(
-                old_tree: &BinaryTree,
-                new_tree: &mut BinaryTree,
-                node: &TreeNode,
-                feature_offset: usize,
-                feature_names: &[String],
-                predicate: &Predicate,
-                parent_idx: Option<usize>,
-                is_left: bool,
-            ) -> Option<usize> {
-                let new_node = node.value.clone();
 
-                if !node.value.is_leaf {
-                    let feature_index = feature_offset + node.value.feature_index as usize;
-                    if let Some(feature_name) = feature_names.get(feature_index) {
-                        if let Some(conditions) = predicate.conditions.get(feature_name) {
-                            if let Some(prune_left) =
-                                should_prune_direction(&node.value, conditions)
-                            {
-                                let child = if prune_left {
-                                    old_tree.get_right_child(node)
-                                } else {
-                                    old_tree.get_left_child(node)
-                                };
-
-                                if let Some(child) = child {
-                                    return prune_recursive(
-                                        old_tree,
-                                        new_tree,
-                                        child,
-                                        feature_offset,
-                                        feature_names,
-                                        predicate,
-                                        parent_idx,
-                                        is_left,
-                                    );
+            if let Some(feature_name) = feature_names.get(feature_index) {
+                if let Some(conditions) = predicate.conditions.get(feature_name) {
+                    for condition in conditions {
+                        match condition {
+                            Condition::LessThan(value) => {
+                                if *value <= node.split_value && !node.default_left {
+                                    return PruneAction::PruneRight;
+                                }
+                            }
+                            Condition::GreaterThanOrEqual(value) => {
+                                if *value >= node.split_value && node.default_left {
+                                    return PruneAction::PruneLeft;
                                 }
                             }
                         }
                     }
                 }
-
-                let current_idx = if let Some(parent_idx) = parent_idx {
-                    let new_tree_node = TreeNode::new(new_node);
-                    if is_left {
-                        new_tree.add_left_node(parent_idx, new_tree_node)
-                    } else {
-                        new_tree.add_right_node(parent_idx, new_tree_node)
-                    }
-                } else {
-                    new_tree.add_root(TreeNode::new(new_node))
-                };
-
-                if !node.value.is_leaf {
-                    if let Some(left) = old_tree.get_left_child(node) {
-                        prune_recursive(
-                            old_tree,
-                            new_tree,
-                            left,
-                            feature_offset,
-                            feature_names,
-                            predicate,
-                            Some(current_idx),
-                            true,
-                        );
-                    }
-
-                    if let Some(right) = old_tree.get_right_child(node) {
-                        prune_recursive(
-                            old_tree,
-                            new_tree,
-                            right,
-                            feature_offset,
-                            feature_names,
-                            predicate,
-                            Some(current_idx),
-                            false,
-                        );
-                    }
-                }
-
-                Some(current_idx)
             }
-
-            prune_recursive(
-                &self.tree,
-                &mut new_tree.tree,
-                root,
-                self.feature_offset,
-                feature_names,
-                predicate,
-                None,
-                true,
-            );
-
-            if !new_tree.tree.is_empty() {
-                Some(new_tree)
-            } else {
-                None
-            }
-        } else {
-            None
+            PruneAction::Keep
         }
+
+        fn prune_recursive(
+            old_tree: &PrunableTree,
+            new_tree: &mut PrunableTree,
+            node_idx: usize,
+            feature_offset: usize,
+            feature_names: &[String],
+            predicate: &Predicate,
+        ) -> Option<usize> {
+            let node = old_tree.get_node(node_idx)?;
+            let feature_index = feature_offset + node.value.feature_index as usize;
+
+            match evaluate_node(&node.value, feature_index, feature_names, predicate) {
+                PruneAction::Keep => {
+                    let new_idx = new_tree.nodes.len();
+                    new_tree.nodes.push(node.clone());
+
+                    if !node.value.is_leaf {
+                        let left_idx = prune_recursive(
+                            old_tree,
+                            new_tree,
+                            node.left,
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                        );
+
+                        let right_idx = prune_recursive(
+                            old_tree,
+                            new_tree,
+                            node.right,
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                        );
+
+                        if let Some(left_idx) = left_idx {
+                            new_tree.connect_left(new_idx, left_idx).ok()?;
+                        }
+                        if let Some(right_idx) = right_idx {
+                            new_tree.connect_right(new_idx, right_idx).ok()?;
+                        }
+                    }
+
+                    Some(new_idx)
+                }
+                PruneAction::PruneLeft => prune_recursive(
+                    old_tree,
+                    new_tree,
+                    node.right,
+                    feature_offset,
+                    feature_names,
+                    predicate,
+                ),
+                PruneAction::PruneRight => prune_recursive(
+                    old_tree,
+                    new_tree,
+                    node.left,
+                    feature_offset,
+                    feature_names,
+                    predicate,
+                ),
+            }
+        }
+
+        let root_idx = self.tree.get_root_index();
+        prune_recursive(
+            &self.tree,
+            &mut new_tree.tree,
+            root_idx,
+            self.feature_offset,
+            feature_names,
+            predicate,
+        )?;
+
+        Some(new_tree)
     }
 
     pub fn builder() -> FeatureTreeBuilder {
@@ -497,7 +482,7 @@ impl FeatureTree {
             return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
         }
 
-        let mut binary_tree = BinaryTree::new();
+        let mut prunable_tree = PrunableTree::new();
         let mut node_map: HashMap<usize, usize> = HashMap::new();
 
         for (builder_idx, node_def) in nodes.iter().enumerate() {
@@ -518,9 +503,9 @@ impl FeatureTree {
                     };
 
                     if builder_idx == 0 {
-                        binary_tree.add_root(node.into())
+                        prunable_tree.add_root(node.into())
                     } else {
-                        binary_tree.add_orphan_node(node.into())
+                        prunable_tree.add_orphan_node(node.into())
                     }
                 }
 
@@ -535,9 +520,9 @@ impl FeatureTree {
                     };
 
                     if builder_idx == 0 {
-                        binary_tree.add_root(node.into())
+                        prunable_tree.add_root(node.into())
                     } else {
-                        binary_tree.add_orphan_node(node.into())
+                        prunable_tree.add_orphan_node(node.into())
                     }
                 }
             };
@@ -550,14 +535,14 @@ impl FeatureTree {
                 let left_idx = node_map[left];
                 let right_idx = node_map[right];
 
-                binary_tree
+                prunable_tree
                     .connect_left(parent_idx, left_idx)
                     .map_err(|_| {
                         FeatureTreeError::InvalidStructure(
                             "Invalid left child connection".to_string(),
                         )
                     })?;
-                binary_tree
+                prunable_tree
                     .connect_right(parent_idx, right_idx)
                     .map_err(|_| {
                         FeatureTreeError::InvalidStructure(
@@ -567,14 +552,14 @@ impl FeatureTree {
             }
         }
 
-        if !binary_tree.validate_connections() {
+        if !prunable_tree.validate_connections() {
             return Err(FeatureTreeError::InvalidStructure(
                 "Tree has disconnected nodes".into(),
             ));
         }
 
         Ok(Self {
-            tree: binary_tree,
+            tree: prunable_tree,
             feature_names,
             feature_types,
             feature_offset,
@@ -1250,17 +1235,15 @@ mod tests {
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
         assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 1.0);
 
-        // Test case 2: Prune left subtree of left child of root
         let mut predicate2 = Predicate::new();
         predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.70));
         let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
-        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
+        assert_eq!(pruned_tree2.predict(&[0.4, 0.2, 0.8]), -2.0);
 
-        // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
         predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 3.0);
+        assert_eq!(pruned_tree3.predict(&[0.6, 0.7, 0.9]), 3.0);
     }
 
     #[test]

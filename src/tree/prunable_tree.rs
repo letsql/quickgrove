@@ -6,11 +6,10 @@ pub enum SplitType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[repr(C)]
 pub(crate) struct SplitData {
     pub(crate) split_value: f64,
     pub(crate) weight: f64,
-    pub(crate) feature_index: i32,
+    pub(crate) feature_index: i32, // no more than 2^32 features allowed
     pub(crate) is_leaf: bool,
     pub(crate) default_left: bool,
     pub(crate) split_type: SplitType,
@@ -22,17 +21,6 @@ pub(crate) struct TreeNode {
     pub(crate) index: usize,
     pub(crate) left: usize,
     pub(crate) right: usize,
-}
-
-impl TreeNode {
-    pub fn new(value: SplitData) -> Self {
-        TreeNode {
-            value,
-            index: 0,
-            left: 0,
-            right: 0,
-        }
-    }
 }
 
 impl From<SplitData> for TreeNode {
@@ -47,13 +35,13 @@ impl From<SplitData> for TreeNode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BinaryTree {
+pub(crate) struct PrunableTree {
     pub(crate) nodes: Vec<TreeNode>,
 }
 
-impl BinaryTree {
+impl PrunableTree {
     pub(crate) fn new() -> Self {
-        BinaryTree { nodes: Vec::new() }
+        PrunableTree { nodes: Vec::new() }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -93,28 +81,6 @@ impl BinaryTree {
         let index = self.nodes.len();
         root.index = index;
         self.nodes.push(root);
-        index
-    }
-
-    pub(crate) fn add_left_node(&mut self, parent: usize, mut child: TreeNode) -> usize {
-        let index = self.nodes.len();
-        child.index = index;
-        self.nodes.push(child);
-
-        if let Some(parent_node) = self.nodes.get_mut(parent) {
-            parent_node.left = index;
-        }
-        index
-    }
-
-    pub(crate) fn add_right_node(&mut self, parent: usize, mut child: TreeNode) -> usize {
-        let index = self.nodes.len();
-        child.index = index;
-        self.nodes.push(child);
-
-        if let Some(parent_node) = self.nodes.get_mut(parent) {
-            parent_node.right = index;
-        }
         index
     }
 
@@ -166,7 +132,7 @@ impl BinaryTree {
     }
 }
 
-impl Default for BinaryTree {
+impl Default for PrunableTree {
     fn default() -> Self {
         Self::new()
     }
