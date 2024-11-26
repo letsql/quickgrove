@@ -18,7 +18,7 @@ use trusty::loader::ModelLoader;
 use trusty::predicates::{Condition, Predicate};
 use trusty::tree::GradientBoostedDecisionTrees;
 
-const BATCHSIZE: usize = 192;
+const BATCHSIZE: usize = 256;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
