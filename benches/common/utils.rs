@@ -7,9 +7,7 @@ use rand::Rng;
 use std::error::Error;
 use std::fs::File;
 use std::sync::Arc;
-use trusty::tree::{
-    FeatureTree, FeatureTreeBuilder, GradientBoostedDecisionTrees, ModelFeatureType,
-};
+use trusty::tree::{FeatureTree, FeatureTreeBuilder, FeatureType, GradientBoostedDecisionTrees};
 use trusty::Objective;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -299,7 +297,7 @@ pub mod feature_tree {
     use super::*;
     pub type BuilderInputs = (
         Vec<String>,
-        Vec<ModelFeatureType>,
+        Vec<FeatureType>,
         Vec<i32>,
         Vec<f64>,
         Vec<u32>,
@@ -328,7 +326,7 @@ pub mod feature_tree {
             .map(|i| format!("feature_{}", i))
             .collect();
 
-        let feature_types = vec![ModelFeatureType::Float; feature_count];
+        let feature_types = vec![FeatureType::Float; feature_count];
 
         let mut split_indices = Vec::with_capacity(nodes);
         let mut split_conditions = Vec::with_capacity(nodes);
@@ -419,9 +417,9 @@ pub mod feature_tree {
 
         let feature_types = (0..feature_count)
             .map(|i| match i % 3 {
-                0 => ModelFeatureType::Float,
-                1 => ModelFeatureType::Int,
-                _ => ModelFeatureType::Indicator,
+                0 => FeatureType::Float,
+                1 => FeatureType::Int,
+                _ => FeatureType::Indicator,
             })
             .collect::<Vec<_>>();
 

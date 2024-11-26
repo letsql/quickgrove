@@ -2,122 +2,24 @@ use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::SplitType;
+use crate::tree::{FeatureTreeError, FeatureType};
 
 use super::prunable_tree::{PrunableTree, SplitData, TreeNode};
 use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
-use std::str::FromStr;
 use std::sync::Arc;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum FeatureTreeError {
-    #[error("Feature names must be provided")]
-    MissingFeatureNames,
-    #[error("Feature types must be provided")]
-    MissingFeatureTypes,
-    #[error("Feature names and types must have the same length")]
-    LengthMismatch,
-    #[error("Feature index {0} out of bounds")]
-    InvalidFeatureIndex(usize),
-    #[error("Invalid node structure")]
-    InvalidStructure(String),
-    #[error("Unsupported feature type: {0}. Supported types are: int, float, i (indicator)")]
-    UnsupportedType(String),
-}
-
-#[derive(Clone, Debug)]
-pub enum ModelFeatureType {
-    Float,
-    Int,
-    Indicator,
-}
-
-impl FromStr for ModelFeatureType {
-    type Err = FeatureTreeError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "int" => Ok(ModelFeatureType::Int),
-            "float" => Ok(ModelFeatureType::Float),
-            "i" => Ok(ModelFeatureType::Indicator),
-            unsupported => Err(FeatureTreeError::UnsupportedType(unsupported.to_string())),
-        }
-    }
-}
-
-impl fmt::Display for ModelFeatureType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ModelFeatureType::Int => write!(f, "int"),
-            ModelFeatureType::Float => write!(f, "float"),
-            ModelFeatureType::Indicator => write!(f, "i"),
-        }
-    }
-}
-
-impl ModelFeatureType {
-    pub fn is_numeric(&self) -> bool {
-        matches!(self, ModelFeatureType::Float | ModelFeatureType::Int)
-    }
-
-    pub fn validate_value(&self, value: f64) -> bool {
-        match self {
-            ModelFeatureType::Float => true,
-            ModelFeatureType::Int => value.fract() == 0.0,
-            ModelFeatureType::Indicator => value == 0.0 || value == 1.0,
-        }
-    }
-
-    pub fn get_arrow_data_type(&self) -> arrow::datatypes::DataType {
-        use arrow::datatypes::DataType;
-        match self {
-            ModelFeatureType::Float => DataType::Float64,
-            ModelFeatureType::Int => DataType::Int64,
-            ModelFeatureType::Indicator => DataType::Boolean,
-        }
-    }
-}
-impl Serialize for ModelFeatureType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-struct ModelFeatureTypeVisitor;
-
-impl<'de> Visitor<'de> for ModelFeatureTypeVisitor {
-    type Value = ModelFeatureType;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a string representing a model feature type")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        ModelFeatureType::from_str(value).map_err(de::Error::custom)
-    }
-}
-
-impl<'de> Deserialize<'de> for ModelFeatureType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_str(ModelFeatureTypeVisitor)
-    }
+#[derive(Debug)]
+enum PruneAction {
+    Keep,
+    PruneLeft,
+    PruneRight,
 }
 
 enum NodeDefinition {
@@ -141,7 +43,7 @@ pub struct FeatureTree {
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
-    pub(crate) feature_types: Arc<Vec<ModelFeatureType>>,
+    pub(crate) feature_types: Arc<Vec<FeatureType>>,
 }
 
 mod serde_helpers {
@@ -242,15 +144,8 @@ impl fmt::Display for FeatureTree {
     }
 }
 
-#[derive(Debug)]
-enum PruneAction {
-    Keep,
-    PruneLeft,
-    PruneRight,
-}
-
 impl FeatureTree {
-    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<ModelFeatureType>>) -> Self {
+    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<FeatureType>>) -> Self {
         FeatureTree {
             tree: PrunableTree::new(),
             feature_offset: 0,
@@ -465,7 +360,7 @@ impl FeatureTree {
     fn from_nodes(
         nodes: Vec<NodeDefinition>,
         feature_names: Arc<Vec<String>>,
-        feature_types: Arc<Vec<ModelFeatureType>>,
+        feature_types: Arc<Vec<FeatureType>>,
         feature_offset: usize,
     ) -> Result<Self, FeatureTreeError> {
         if nodes.is_empty() {
@@ -575,7 +470,7 @@ impl Default for FeatureTree {
 
 pub struct FeatureTreeBuilder {
     feature_names: Option<Arc<Vec<String>>>,
-    feature_types: Option<Arc<Vec<ModelFeatureType>>>,
+    feature_types: Option<Arc<Vec<FeatureType>>>,
     feature_offset: usize,
     split_indices: Vec<i32>,
     split_conditions: Vec<f64>,
@@ -607,7 +502,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn feature_types(self, types: Vec<ModelFeatureType>) -> Self {
+    pub fn feature_types(self, types: Vec<FeatureType>) -> Self {
         Self {
             feature_types: Some(Arc::new(types)),
             ..self
@@ -715,7 +610,7 @@ pub struct GradientBoostedDecisionTrees {
     pub trees: Vec<FeatureTree>,
     pub feature_names: Arc<Vec<String>>,
     pub base_score: f64,
-    pub feature_types: Arc<Vec<ModelFeatureType>>,
+    pub feature_types: Arc<Vec<FeatureType>>,
     pub objective: Objective,
 }
 
@@ -742,10 +637,9 @@ impl GradientBoostedDecisionTrees {
         let mut builder = Float64Builder::with_capacity(num_rows);
         let mut feature_values = Vec::with_capacity(num_features);
 
-        // Pre-allocate vectors to avoid repeated allocations
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
             let values = match (array.data_type(), feature_type) {
-                (DataType::Float64, ModelFeatureType::Float) => {
+                (DataType::Float64, FeatureType::Float) => {
                     let array = array
                         .as_any()
                         .downcast_ref::<Float64Array>()
@@ -754,7 +648,6 @@ impl GradientBoostedDecisionTrees {
                         })?;
 
                     let mut values = Vec::with_capacity(num_rows);
-                    // Get nulls bitmap for faster access
                     if let Some(null_bitmap) = array.nulls() {
                         let values_slice = array.values();
                         for i in 0..num_rows {
@@ -765,12 +658,11 @@ impl GradientBoostedDecisionTrees {
                             });
                         }
                     } else {
-                        // No nulls, just copy values
                         values.extend_from_slice(array.values());
                     }
                     values
                 }
-                (DataType::Int64, ModelFeatureType::Int) => {
+                (DataType::Int64, FeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
@@ -790,7 +682,7 @@ impl GradientBoostedDecisionTrees {
                     }
                     values
                 }
-                (DataType::Boolean, ModelFeatureType::Indicator) => {
+                (DataType::Boolean, FeatureType::Indicator) => {
                     let array = array
                         .as_any()
                         .downcast_ref::<BooleanArray>()
@@ -974,7 +866,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -994,7 +886,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["feature0".to_string()])
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0, -1, -1])
             .split_conditions(vec![0.5, 0.0, 0.0])
             .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
@@ -1020,9 +912,9 @@ mod tests {
                 "feature2".to_string(),
             ])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
             ])
             .split_indices(vec![0, 1, 2, -1, -1, -1, 1, -1, 2, -1, -1])
             .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.0, 0.6, 0.0, 0.8, 0.0, 0.0])
@@ -1121,7 +1013,7 @@ mod tests {
     fn test_feature_tree_builder_validation() {
         // Test missing feature names
         let result = FeatureTreeBuilder::new()
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
@@ -1133,7 +1025,7 @@ mod tests {
         // Test length mismatch
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
@@ -1161,7 +1053,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees: vec![tree1, tree2],
             feature_names: Arc::new(vec!["age".to_string(), "income".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.5,
             objective: Objective::SquaredError,
         };
@@ -1281,7 +1173,7 @@ mod tests {
 
         let tree = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -1303,7 +1195,7 @@ mod tests {
     fn test_array_length_mismatch() {
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![1], vec![2, 3]) // mismatched lengths
@@ -1346,9 +1238,9 @@ mod tests {
         FeatureTreeBuilder::new()
             .feature_names(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Int,
-                ModelFeatureType::Indicator,
+                FeatureType::Float,
+                FeatureType::Int,
+                FeatureType::Indicator,
             ])
             .split_indices(vec![0, 1, -1, -1, 2, -1, -1])
             .split_conditions(vec![0.5, 60.0, 0.0, 0.0, 0.5, 0.0, 0.0])
@@ -1371,9 +1263,9 @@ mod tests {
             trees: vec![tree],
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()]),
             feature_types: Arc::new(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Int,
-                ModelFeatureType::Indicator,
+                FeatureType::Float,
+                FeatureType::Int,
+                FeatureType::Indicator,
             ]),
             base_score: 0.0,
             objective: Objective::SquaredError,
@@ -1430,7 +1322,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees,
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
         };
@@ -1458,7 +1350,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
         };
@@ -1485,9 +1377,9 @@ mod tests {
                 "feature2".to_string(),
             ])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
             ])
             .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
             .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])

@@ -1,6 +1,6 @@
 use crate::loader::ModelError;
 use crate::objective::Objective;
-use crate::tree::ModelFeatureType;
+use crate::tree::FeatureType;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -9,7 +9,7 @@ pub(crate) struct XGBoostParser;
 impl XGBoostParser {
     pub fn parse_feature_metadata(
         json: &Value,
-    ) -> Result<(Vec<String>, Vec<ModelFeatureType>), ModelError> {
+    ) -> Result<(Vec<String>, Vec<FeatureType>), ModelError> {
         let feature_names = json["learner"]["feature_names"]
             .as_array()
             .ok_or_else(|| ModelError::MissingField("feature_names".to_string()))?
@@ -28,7 +28,7 @@ impl XGBoostParser {
                 v.as_str()
                     .ok_or_else(|| ModelError::InvalidFieldType("feature_types".to_string()))
                     .and_then(|type_str| {
-                        ModelFeatureType::from_str(type_str).map_err(|e| {
+                        FeatureType::from_str(type_str).map_err(|e| {
                             ModelError::InvalidFieldType(format!("feature_types: {}", e))
                         })
                     })
