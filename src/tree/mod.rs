@@ -1,6 +1,8 @@
 mod feature_type;
-mod prunable_tree;
+mod serde_helpers;
 mod trees;
+mod vec_tree;
 pub use feature_type::{FeatureTreeError, FeatureType};
-pub use prunable_tree::SplitType;
+pub use serde_helpers::{arc_vec_serde, prunable_tree_serde};
 pub use trees::{FeatureTree, FeatureTreeBuilder, GradientBoostedDecisionTrees};
+pub use vec_tree::SplitType;

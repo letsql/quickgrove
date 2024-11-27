@@ -6,21 +6,21 @@ pub enum SplitType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct SplitData {
-    pub(crate) split_value: f64,
-    pub(crate) weight: f64,
-    pub(crate) feature_index: i32, // no more than 2^32 features allowed
-    pub(crate) is_leaf: bool,
-    pub(crate) default_left: bool,
-    pub(crate) split_type: SplitType,
+pub struct SplitData {
+    pub split_value: f64,
+    pub weight: f64,
+    pub feature_index: i32, // no more than 2^32 features allowed
+    pub is_leaf: bool,
+    pub default_left: bool,
+    pub split_type: SplitType,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct TreeNode {
-    pub(crate) value: SplitData,
-    pub(crate) index: usize,
-    pub(crate) left: usize,
-    pub(crate) right: usize,
+pub struct TreeNode {
+    pub value: SplitData,
+    pub index: usize,
+    pub left: usize,
+    pub right: usize,
 }
 
 impl From<SplitData> for TreeNode {
@@ -35,13 +35,13 @@ impl From<SplitData> for TreeNode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PrunableTree {
-    pub(crate) nodes: Vec<TreeNode>,
+pub struct VecTree {
+    pub nodes: Vec<TreeNode>,
 }
 
-impl PrunableTree {
+impl VecTree {
     pub(crate) fn new() -> Self {
-        PrunableTree { nodes: Vec::new() }
+        VecTree { nodes: Vec::new() }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -113,7 +113,7 @@ impl PrunableTree {
 
     pub(crate) fn validate_connections(&self) -> bool {
         let mut visited = vec![false; self.nodes.len()];
-        let mut stack = vec![0]; // Start from root
+        let mut stack = vec![0];
 
         while let Some(idx) = stack.pop() {
             visited[idx] = true;
@@ -132,7 +132,7 @@ impl PrunableTree {
     }
 }
 
-impl Default for PrunableTree {
+impl Default for VecTree {
     fn default() -> Self {
         Self::new()
     }

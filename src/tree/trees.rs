@@ -1,10 +1,10 @@
+use super::vec_tree::{SplitData, TreeNode, VecTree};
 use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
+use crate::tree::serde_helpers;
 use crate::tree::SplitType;
 use crate::tree::{FeatureTreeError, FeatureType};
-
-use super::prunable_tree::{PrunableTree, SplitData, TreeNode};
 use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
@@ -38,56 +38,12 @@ enum NodeDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureTree {
     #[serde(with = "self::serde_helpers::prunable_tree_serde")]
-    pub(crate) tree: PrunableTree,
+    pub(crate) tree: VecTree,
     pub(crate) feature_offset: usize,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_types: Arc<Vec<FeatureType>>,
-}
-
-mod serde_helpers {
-    pub mod prunable_tree_serde {
-        use super::super::*;
-        use serde::{Deserialize, Deserializer, Serializer};
-
-        pub fn serialize<S>(tree: &PrunableTree, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            serializer.serialize_newtype_struct("PrunableTree", &tree.nodes)
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<PrunableTree, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let nodes = Vec::deserialize(deserializer)?;
-            Ok(PrunableTree { nodes })
-        }
-    }
-
-    pub mod arc_vec_serde {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-        use std::sync::Arc;
-
-        pub fn serialize<S, T>(arc: &Arc<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-            T: Serialize,
-        {
-            Vec::serialize(arc, serializer)
-        }
-
-        pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<Vec<T>>, D::Error>
-        where
-            D: Deserializer<'de>,
-            T: Deserialize<'de>,
-        {
-            let vec = Vec::deserialize(deserializer)?;
-            Ok(Arc::new(vec))
-        }
-    }
 }
 
 impl fmt::Display for FeatureTree {
@@ -147,14 +103,13 @@ impl fmt::Display for FeatureTree {
 impl FeatureTree {
     pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<FeatureType>>) -> Self {
         FeatureTree {
-            tree: PrunableTree::new(),
+            tree: VecTree::new(),
             feature_offset: 0,
             feature_names,
             feature_types,
         }
     }
 
-    #[inline(always)]
     pub fn predict(&self, features: &[f64]) -> f64 {
         let mut current = match self.tree.get_node(self.tree.get_root_index()) {
             Some(node) => node,
@@ -190,7 +145,7 @@ impl FeatureTree {
     }
 
     pub fn depth(&self) -> usize {
-        fn recursive_depth(tree: &PrunableTree, node: &TreeNode) -> usize {
+        fn recursive_depth(tree: &VecTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -213,7 +168,7 @@ impl FeatureTree {
     }
 
     pub fn num_nodes(&self) -> usize {
-        fn count_reachable_nodes(tree: &PrunableTree, node: &TreeNode) -> usize {
+        fn count_reachable_nodes(tree: &VecTree, node: &TreeNode) -> usize {
             if node.value.is_leaf {
                 1
             } else {
@@ -277,8 +232,8 @@ impl FeatureTree {
         }
 
         fn prune_recursive(
-            old_tree: &PrunableTree,
-            new_tree: &mut PrunableTree,
+            old_tree: &VecTree,
+            new_tree: &mut VecTree,
             node_idx: usize,
             feature_offset: usize,
             feature_names: &[String],
@@ -377,7 +332,7 @@ impl FeatureTree {
             return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
         }
 
-        let mut prunable_tree = PrunableTree::new();
+        let mut prunable_tree = VecTree::new();
         let mut node_map: HashMap<usize, usize> = HashMap::new();
 
         for (builder_idx, node_def) in nodes.iter().enumerate() {
