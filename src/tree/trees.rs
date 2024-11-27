@@ -89,7 +89,7 @@ impl fmt::Display for FeatureTree {
                     .get(feature_index)
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.value.split_value)
+                format!("{} < {:.4}", feature_name, node.split_value())
             }
         }
 
@@ -126,9 +126,9 @@ impl FeatureTree {
             let split_value = features[feature_idx];
 
             let go_right = if split_value.is_nan() {
-                !current.value.default_left
+                !current.default_left()
             } else {
-                split_value >= current.value.split_value
+                split_value >= current.split_value()
             };
 
             current = if go_right {

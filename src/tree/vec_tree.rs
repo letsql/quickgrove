@@ -22,23 +22,67 @@ pub trait Traversable: Clone {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct SplitData {
-    pub split_value: f64,   // 0-7: f64 with 8-byte alignment
-    pub weight: f64,        // 8-15: f64 with 8-byte alignment
-    pub feature_index: i32, // 16-19: i32 with 4-byte alignment
-    pub is_leaf: bool,      // 20: single byte (1 byte alignment)
-    pub default_left: bool, // 21: single byte (1-byte alignment)
-    pub split_type: SplitType, // 22: single byte enum (1-byte alignment)
-                            // 23: padding byte to maintain 8-byte alignment
-} // Total: 24 bytes, aligned to 8 bytes
+pub enum SplitData {
+    Leaf {
+        weight: f32, // 4 bytes
+    },
+    Split {
+        split_value: f32,   // 4 bytes
+        feature_index: i32, // 4 bytes
+        default_left: bool, // 1 byte
+        split_type: SplitType, // 1 byte
+                            // 2 bytes padding
+    },
+} // Total: 12 bytes, aligned to 4 bytes
+
+impl SplitData {
+    fn is_leaf(&self) -> bool {
+        matches!(self, SplitData::Leaf { .. })
+    }
+
+    fn weight(&self) -> f64 {
+        match self {
+            SplitData::Leaf { weight } => *weight as f64,
+            SplitData::Split { .. } => 0.0,
+        }
+    }
+
+    fn split_value(&self) -> f64 {
+        match self {
+            SplitData::Split { split_value, .. } => *split_value as f64,
+            SplitData::Leaf { .. } => 0.0,
+        }
+    }
+
+    fn feature_index(&self) -> i32 {
+        match self {
+            SplitData::Split { feature_index, .. } => *feature_index,
+            SplitData::Leaf { .. } => -1,
+        }
+    }
+
+    fn default_left(&self) -> bool {
+        match self {
+            SplitData::Split { default_left, .. } => *default_left,
+            SplitData::Leaf { .. } => false,
+        }
+    }
+
+    fn split_type(&self) -> SplitType {
+        match self {
+            SplitData::Split { split_type, .. } => *split_type,
+            SplitData::Leaf { .. } => SplitType::Numerical,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TreeNode {
-    pub value: SplitData, // 0-23: 24 bytes
-    pub left: usize,      // 24-31: 8 bytes
-    pub right: usize,     // 32-39: 8 bytes
-    pub index: usize,     // 40-47: 8 bytes
-} // Total: 48 bytes, aligned to 8 bytes, may cross cache lines
+    pub value: SplitData, // 0-15: 16 bytes
+    pub left: usize,      // 16-23: 8 bytes
+    pub right: usize,     // 24-31: 8 bytes
+    pub index: usize,     // 32-39: 8 bytes
+} // Total: 40 bytes, aligned to 8 bytes, may cross cache lines
 
 impl From<SplitData> for TreeNode {
     fn from(node: SplitData) -> Self {
@@ -80,40 +124,38 @@ impl Traversable for TreeNode {
     }
 
     fn is_leaf(&self) -> bool {
-        self.value.is_leaf
+        self.value.is_leaf()
     }
 
     fn default_left(&self) -> bool {
-        self.value.default_left
+        self.value.default_left()
     }
 
     fn feature_index(&self) -> i32 {
-        self.value.feature_index
+        self.value.feature_index()
     }
 
     fn split_type(&self) -> SplitType {
-        self.value.split_type
+        self.value.split_type()
     }
 
     fn split_value(&self) -> f64 {
-        self.value.split_value
+        self.value.split_value()
     }
 
     fn weight(&self) -> f64 {
-        self.value.weight
+        self.value.weight()
     }
 }
 
 impl TreeNode {
     pub fn new_split(feature_index: i32, split_value: f64, default_left: bool) -> Self {
         Self::new(
-            SplitData {
+            SplitData::Split {
                 feature_index,
-                split_value,
-                weight: 0.0,
-                is_leaf: false,
-                split_type: SplitType::Numerical,
+                split_value: split_value as f32,
                 default_left,
+                split_type: SplitType::Numerical,
             },
             0,
         )
@@ -121,24 +163,19 @@ impl TreeNode {
 
     pub fn new_leaf(weight: f64) -> Self {
         Self::new(
-            SplitData {
-                feature_index: -1,
-                split_value: 0.0,
-                weight,
-                is_leaf: true,
-                split_type: SplitType::Numerical,
-                default_left: false,
+            SplitData::Leaf {
+                weight: weight as f32,
             },
             0,
         )
     }
 
     pub fn should_prune_right(&self, threshold: f64) -> bool {
-        threshold <= self.value.split_value && !self.value.default_left
+        threshold <= self.value.split_value() && !self.value.default_left()
     }
 
     pub fn should_prune_left(&self, threshold: f64) -> bool {
-        threshold >= self.value.split_value && self.value.default_left
+        threshold >= self.value.split_value() && self.value.default_left()
     }
 }
 
