@@ -23,21 +23,22 @@ pub trait Traversable: Clone {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SplitData {
-    pub split_value: f64,
-    pub weight: f64,
-    pub feature_index: i32, // no more than 2^32 features allowed
-    pub is_leaf: bool,
-    pub default_left: bool,
-    pub split_type: SplitType,
-}
+    pub split_value: f64,   // 0-7: f64 with 8-byte alignment
+    pub weight: f64,        // 8-15: f64 with 8-byte alignment
+    pub feature_index: i32, // 16-19: i32 with 4-byte alignment
+    pub is_leaf: bool,      // 20: single byte (1 byte alignment)
+    pub default_left: bool, // 21: single byte (1-byte alignment)
+    pub split_type: SplitType, // 22: single byte enum (1-byte alignment)
+                            // 23: padding byte to maintain 8-byte alignment
+} // Total: 24 bytes, aligned to 8 bytes
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TreeNode {
-    pub value: SplitData,
-    pub index: usize,
-    pub left: usize,
-    pub right: usize,
-}
+    pub value: SplitData, // 0-23: 24 bytes
+    pub left: usize,      // 24-31: 8 bytes
+    pub right: usize,     // 32-39: 8 bytes
+    pub index: usize,     // 40-47: 8 bytes
+} // Total: 48 bytes, aligned to 8 bytes, may cross cache lines
 
 impl From<SplitData> for TreeNode {
     fn from(node: SplitData) -> Self {
@@ -239,5 +240,42 @@ impl<N: Traversable> VecTree<N> {
 impl<N: Traversable> Default for VecTree<N> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_tree_node_memory_layout() {
+        println!("Size of TreeNode: {}", std::mem::size_of::<TreeNode>());
+        println!(
+            "Alignment of TreeNode: {}",
+            std::mem::align_of::<TreeNode>()
+        );
+        println!("Size of SplitData: {}", std::mem::size_of::<SplitData>());
+        println!(
+            "Alignment of SplitData: {}",
+            std::mem::align_of::<SplitData>()
+        );
+        assert_eq!(std::mem::size_of::<TreeNode>(), 48);
+        assert_eq!(std::mem::align_of::<TreeNode>(), 8);
+    }
+
+    #[test]
+    fn test_tree_split_data_memory_layout() {
+        println!("Size of SplitData: {}", std::mem::size_of::<SplitData>());
+        println!(
+            "Alignment of SplitData: {}",
+            std::mem::align_of::<SplitData>()
+        );
+        assert_eq!(std::mem::size_of::<SplitData>(), 24);
+        assert_eq!(std::mem::align_of::<SplitData>(), 8);
+    }
+
+    #[test]
+    fn test_split_type_data_memory_layout() {
+        assert_eq!(std::mem::size_of::<SplitType>(), 1);
     }
 }
