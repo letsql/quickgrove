@@ -1,23 +1,25 @@
-use crate::tree::vec_tree::VecTree;
+use crate::tree::vec_tree::{TreeNode, VecTree};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 
-pub mod prunable_tree_serde {
+type VecTreeWithTreeNode = VecTree<TreeNode>;
+
+pub mod vec_tree_serde {
     use super::*;
 
-    pub fn serialize<S>(tree: &VecTree, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(tree: &VecTreeWithTreeNode, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_newtype_struct("VecTree", &tree.nodes)
+        serializer.serialize_newtype_struct("VecTreeWithTreeNode", &tree.nodes)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<VecTree, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<VecTreeWithTreeNode, D::Error>
     where
         D: Deserializer<'de>,
     {
         let nodes = Vec::deserialize(deserializer)?;
-        Ok(VecTree { nodes })
+        Ok(VecTreeWithTreeNode { nodes })
     }
 }
 
