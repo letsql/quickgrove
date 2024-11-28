@@ -2,7 +2,20 @@ name: Cargo Build & Test
 
 on:
   push:
+    # Skip the backend suite if all changes are docs
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.qmd"
+      - "*.md"
+      - "codecov.yml"
+      - ".envrc"
+    branches:
+      - main
+    tags:
+      - '*'
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
