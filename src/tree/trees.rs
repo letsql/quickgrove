@@ -1,4 +1,4 @@
-use super::vec_tree::{Traversable, TreeNode, VecTree};
+use super::vec_tree::{OrderingStrategy, Traversable, TreeNode, VecTree};
 use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
@@ -305,6 +305,11 @@ impl FeatureTree {
             feature_names,
             predicate,
         )?;
+
+        new_tree
+            .tree
+            .rebuild_with_strategy(OrderingStrategy::Dfs)
+            .unwrap();
 
         Some(new_tree)
     }
@@ -749,7 +754,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             .map(|tree_json| {
                 let arrays = XGBoostParser::parse_tree_arrays(tree_json)?;
 
-                FeatureTreeBuilder::new()
+                let mut tree = FeatureTreeBuilder::new()
                     .feature_names(feature_names.clone())
                     .feature_types(feature_types.clone())
                     .split_indices(arrays.split_indices)
@@ -758,7 +763,11 @@ impl ModelLoader for GradientBoostedDecisionTrees {
                     .base_weights(arrays.base_weights)
                     .default_left(arrays.default_left)
                     .build()
-                    .map_err(ModelError::from)
+                    .map_err(ModelError::from)?;
+                tree.tree
+                    .rebuild_with_strategy(OrderingStrategy::Bfs)
+                    .unwrap();
+                Ok::<FeatureTree, ModelError>(tree)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
