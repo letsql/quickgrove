@@ -58,6 +58,8 @@ impl XGBoostParser {
         let default_left =
             Self::extract_array::<bool>(tree_json, "default_left", |v| v.as_i64().map(|x| x != 0))?;
 
+        let sum_hessian = Self::extract_array::<f64>(tree_json, "sum_hessian", |v| v.as_f64())?;
+
         Ok(TreeArrays {
             split_indices,
             split_conditions,
@@ -65,6 +67,7 @@ impl XGBoostParser {
             right_children,
             base_weights,
             default_left,
+            sum_hessian,
         })
     }
 
@@ -117,4 +120,5 @@ pub(crate) struct TreeArrays {
     pub right_children: Vec<u32>,
     pub base_weights: Vec<f64>,
     pub default_left: Vec<bool>,
+    pub sum_hessian: Vec<f64>,
 }

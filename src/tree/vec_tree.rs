@@ -1,3 +1,4 @@
+use crate::tree::trees::TreeMetricsStore;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -364,6 +365,49 @@ impl<N: Traversable> VecTree<N> {
             }
         }
         order
+    }
+    pub fn reorder_by_cover_stats(
+        &mut self,
+        metrics_store: &TreeMetricsStore,
+    ) -> Result<(), String> {
+        if self.nodes.is_empty() {
+            return Ok(());
+        }
+
+        let mut current_level = vec![self.get_root_index()];
+
+        while !current_level.is_empty() {
+            let mut next_level = Vec::new();
+
+            // Process each node in current level
+            for &node_idx in &current_level {
+                let node = self
+                    .get_node(node_idx)
+                    .ok_or_else(|| "Invalid node index".to_string())?;
+
+                if !node.is_leaf() {
+                    let left = node.left();
+                    let right = node.right();
+
+                    // Get cover statistics
+                    let left_cover = metrics_store.get_sum_hessian(&left).unwrap_or(0.0);
+                    let right_cover = metrics_store.get_sum_hessian(&right).unwrap_or(0.0);
+
+                    // Collect child nodes for next level
+                    if right_cover > left_cover {
+                        next_level.push(right);
+                        next_level.push(left);
+                    } else {
+                        next_level.push(left);
+                        next_level.push(right);
+                    }
+                }
+            }
+
+            current_level = next_level;
+        }
+
+        Ok(())
     }
 
     pub fn rebuild_with_strategy(
