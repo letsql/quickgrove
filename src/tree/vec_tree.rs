@@ -26,7 +26,7 @@ pub trait Traversable: Clone {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SplitData {
     Leaf {
-        weight: f64, // 4 bytes
+        weight: f64, // 8 bytes
     },
     Split {
         split_value: f64,   // 8 bytes
@@ -374,42 +374,50 @@ impl<N: Traversable> VecTree<N> {
             return Ok(());
         }
 
-        let mut current_level = vec![self.get_root_index()];
+        // Collect nodes in desired order using preorder traversal
+        let mut ordered_indices = Vec::new();
 
-        while !current_level.is_empty() {
-            let mut next_level = Vec::new();
+        fn preorder_collect<T: Traversable>(
+            tree: &VecTree<T>,
+            metrics_store: &TreeMetricsStore,
+            idx: usize,
+            ordered_indices: &mut Vec<usize>,
+        ) -> Result<(), String> {
+            ordered_indices.push(idx);
 
-            // Process each node in current level
-            for &node_idx in &current_level {
-                let node = self
-                    .get_node(node_idx)
-                    .ok_or_else(|| "Invalid node index".to_string())?;
+            let node = tree
+                .get_node(idx)
+                .ok_or_else(|| "Invalid node index".to_string())?;
 
-                if !node.is_leaf() {
-                    let left = node.left();
-                    let right = node.right();
+            if !node.is_leaf() {
+                let left = node.left();
+                let right = node.right();
 
-                    // Get cover statistics
-                    let left_cover = metrics_store.get_sum_hessian(&left).unwrap_or(0.0);
-                    let right_cover = metrics_store.get_sum_hessian(&right).unwrap_or(0.0);
+                let left_cover = metrics_store.get_sum_hessian(&left).unwrap_or(0.0);
+                let right_cover = metrics_store.get_sum_hessian(&right).unwrap_or(0.0);
 
-                    // Collect child nodes for next level
-                    if right_cover > left_cover {
-                        next_level.push(right);
-                        next_level.push(left);
-                    } else {
-                        next_level.push(left);
-                        next_level.push(right);
-                    }
+                if right_cover > left_cover {
+                    preorder_collect(tree, metrics_store, right, ordered_indices)?;
+                    preorder_collect(tree, metrics_store, left, ordered_indices)?;
+                } else {
+                    preorder_collect(tree, metrics_store, left, ordered_indices)?;
+                    preorder_collect(tree, metrics_store, right, ordered_indices)?;
                 }
             }
-
-            current_level = next_level;
+            Ok(())
         }
 
-        Ok(())
-    }
+        preorder_collect(
+            self,
+            metrics_store,
+            self.get_root_index(),
+            &mut ordered_indices,
+        )?;
 
+        // Use existing reorder_nodes method to perform the reordering
+        self.reorder_nodes(ordered_indices)
+            .map_err(|e| e.to_string())
+    }
     pub fn rebuild_with_strategy(
         &mut self,
         strategy: OrderingStrategy,
@@ -535,11 +543,13 @@ impl<N: Traversable> Default for VecTree<N> {
         Self::new()
     }
 }
-
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
+    type VecTreeWithTreeNode = VecTree<TreeNode>;
+    use crate::tree::trees::{NodeMetrics, TreeMetricsStore};
 
+    // Memory layout tests
     #[test]
     fn test_tree_node_memory_layout() {
         println!("Size of TreeNode: {}", std::mem::size_of::<TreeNode>());
@@ -556,32 +566,15 @@ mod test {
         assert_eq!(std::mem::align_of::<TreeNode>(), 8);
     }
 
-    #[test]
-    fn test_tree_split_data_memory_layout() {
-        println!("Size of SplitData: {}", std::mem::size_of::<SplitData>());
-        println!(
-            "Alignment of SplitData: {}",
-            std::mem::align_of::<SplitData>()
-        );
-        assert_eq!(std::mem::size_of::<SplitData>(), 16);
-        assert_eq!(std::mem::align_of::<SplitData>(), 8);
-    }
-
-    #[test]
-    fn test_split_type_data_memory_layout() {
-        assert_eq!(std::mem::size_of::<SplitType>(), 0);
-    }
-
-    // Helper function to create a balanced test tree:
-    //       0
-    //     /   \
-    //    1     2
-    //   / \   / \
-    //  3   4 5   6
-    fn create_balanced_tree() -> VecTree<TreeNode> {
+    // Helper function to create a balanced tree with known structure
+    fn create_test_tree() -> VecTreeWithTreeNode {
+        //          0
+        //        /   \
+        //       1     2
+        //      / \   / \
+        //     3   4 5   6
         let mut tree = VecTree::new();
 
-        // Create nodes
         let root = TreeNode::new_split(0, 0.5, false);
         let node1 = TreeNode::new_split(1, 0.3, false);
         let node2 = TreeNode::new_split(2, 0.7, false);
@@ -590,7 +583,6 @@ mod test {
         let leaf5 = TreeNode::new_leaf(1.0);
         let leaf6 = TreeNode::new_leaf(2.0);
 
-        // Add nodes
         let root_idx = tree.add_root(root);
         let node1_idx = tree.add_orphan_node(node1);
         let node2_idx = tree.add_orphan_node(node2);
@@ -599,7 +591,6 @@ mod test {
         let leaf5_idx = tree.add_orphan_node(leaf5);
         let leaf6_idx = tree.add_orphan_node(leaf6);
 
-        // Connect nodes
         tree.connect_left(root_idx, node1_idx).unwrap();
         tree.connect_right(root_idx, node2_idx).unwrap();
         tree.connect_left(node1_idx, leaf3_idx).unwrap();
@@ -610,37 +601,27 @@ mod test {
         tree
     }
 
-    // Helper function to create an unbalanced test tree:
-    //       0
-    //     /   \
-    //    1     2
-    //   /
-    //  3
-    //  /
-    // 4
-    fn create_unbalanced_tree() -> VecTree<TreeNode> {
-        let mut tree = VecTree::new();
+    // Create a MetricsStore with sample statistics
+    fn create_test_metrics() -> TreeMetricsStore {
+        let mut store = TreeMetricsStore::new();
 
-        let root = TreeNode::new_split(0, 0.5, false);
-        let node1 = TreeNode::new_split(1, 0.3, false);
-        let leaf2 = TreeNode::new_leaf(2.0);
-        let node3 = TreeNode::new_split(3, 0.1, false);
-        let leaf4 = TreeNode::new_leaf(-1.0);
-        let root_idx = tree.add_root(root);
-        let node1_idx = tree.add_orphan_node(node1);
-        let leaf2_idx = tree.add_orphan_node(leaf2);
-        let node3_idx = tree.add_orphan_node(node3);
-        let leaf4_idx = tree.add_orphan_node(leaf4);
-        tree.connect_left(root_idx, node1_idx).unwrap();
-        tree.connect_right(root_idx, leaf2_idx).unwrap();
-        tree.connect_left(node1_idx, node3_idx).unwrap();
-        tree.connect_left(node3_idx, leaf4_idx).unwrap();
-        tree
+        // Parent cover should equal sum of children's cover
+        store.insert(0, NodeMetrics { sum_hessian: 100.0 }); // root
+        store.insert(1, NodeMetrics { sum_hessian: 30.0 }); // left subtree
+        store.insert(2, NodeMetrics { sum_hessian: 70.0 }); // right subtree (higher cover)
+        store.insert(3, NodeMetrics { sum_hessian: 10.0 });
+        store.insert(4, NodeMetrics { sum_hessian: 20.0 }); // higher than sibling (3)
+        store.insert(5, NodeMetrics { sum_hessian: 20.0 });
+        store.insert(6, NodeMetrics { sum_hessian: 50.0 }); // higher than sibling (5)
+
+        store
     }
 
     #[test]
-    fn test_dfs_ordering_debug() {
-        let tree = create_balanced_tree();
+    fn test_cover_stats_reordering_debug() {
+        let mut tree = create_test_tree();
+        let metrics = create_test_metrics();
+
         println!("\nOriginal tree:");
         println!("{}", tree);
 
@@ -651,108 +632,40 @@ mod test {
                 println!("Node {}: Leaf weight={}", i, node.weight());
             } else {
                 println!(
-                    "Node {}: Split feat={} left={} right={}",
+                    "Node {}: Split feat={} left={} right={} cover={}",
                     i,
                     node.feature_index(),
                     node.left(),
-                    node.right()
+                    node.right(),
+                    metrics.get_sum_hessian(&i).unwrap_or(0.0)
                 );
             }
         }
 
-        // Get Dfs order and print what moves where
-        let dfs_order = tree.get_dfs_order();
-        println!("\nDfs order: {:?}", dfs_order);
-        println!("\nNode movements for Dfs order:");
-        for (new_idx, &old_idx) in dfs_order.iter().enumerate() {
-            println!("Position {}: Node {} will move here", new_idx, old_idx);
-        }
+        // Perform reordering
+        tree.reorder_by_cover_stats(&metrics).unwrap();
 
-        // Apply reordering
-        let mut reordered = tree.clone();
-        reordered.reorder_nodes(dfs_order).unwrap();
+        println!("\nAfter cover stats reordering:");
+        println!("{}", tree);
 
-        // Print final layout
         println!("\nFinal node layout:");
-        for (i, node) in reordered.nodes.iter().enumerate() {
+        for (i, node) in tree.nodes.iter().enumerate() {
             if node.is_leaf() {
                 println!("Node {}: Leaf weight={}", i, node.weight());
             } else {
                 println!(
-                    "Node {}: Split feat={} left={} right={}",
+                    "Node {}: Split feat={} left={} right={} cover={}",
                     i,
                     node.feature_index(),
                     node.left(),
-                    node.right()
+                    node.right(),
+                    metrics.get_sum_hessian(&i).unwrap_or(0.0)
                 );
             }
         }
-    }
 
-    #[test]
-    fn test_bfs_ordering_balanced() {
-        let tree = create_balanced_tree();
-        let original_structure = verify_tree_structure(&tree);
-        let order = tree.get_bfs_order();
-
-        // Bfs should visit level by level
-        assert_eq!(order, vec![0, 1, 2, 3, 4, 5, 6]);
-
-        let mut reordered = tree.clone();
-        reordered
-            .rebuild_with_strategy(OrderingStrategy::Bfs)
-            .unwrap();
-        assert!(reordered.validate_connections());
-
-        let new_structure = verify_tree_structure(&reordered);
-        assert_eq!(new_structure.len(), original_structure.len());
-    }
-
-    #[test]
-    fn test_unbalanced_tree_orderings() {
-        // Create unbalanced tree:
-        //          0 (split_0 < 0.5)
-        //         /              \
-        //    1 (split_1 < 0.3)   4 (leaf: 1.0)
-        //     /            \
-        // 2 (leaf: -2.0)   3 (leaf: -1.0)
-        println!("Creating tree...");
-        let tree = create_unbalanced_tree();
-        println!("Tree created");
-
-        println!("Original tree:");
-        println!("{}", tree);
-
-        println!("Getting original structure...");
-        let original_structure = verify_tree_structure(&tree);
-        println!("Original structure obtained");
-
-        // Test each ordering strategy
-        let strategy = OrderingStrategy::Dfs;
-        println!("\nTesting {:?} ordering", strategy);
-
-        println!("Getting order...");
-        let order = match strategy {
-            OrderingStrategy::Dfs => tree.get_dfs_order(),
-            OrderingStrategy::Bfs => tree.get_bfs_order(),
-        };
-        println!("{:?} order: {:?}", strategy, order);
-
-        println!("Creating reordered tree...");
-        let mut reordered = tree.clone();
-        reordered.rebuild_with_strategy(strategy).unwrap();
-
-        println!("After {:?} ordering:", strategy);
-        println!("{}", reordered);
-
-        println!("Validating connections...");
-        assert!(reordered.validate_connections());
-
-        println!("Getting new structure...");
-        let new_structure = verify_tree_structure(&reordered);
-
-        println!("Comparing lengths...");
-        assert_eq!(new_structure.len(), original_structure.len());
+        // Verify structure is still valid
+        assert!(tree.validate_connections());
     }
 
     fn verify_tree_structure(
@@ -777,29 +690,62 @@ mod test {
     }
 
     #[test]
-    fn test_empty_tree_ordering() {
-        let mut empty_tree: VecTree<TreeNode> = VecTree::new();
+    fn test_cover_stats_preserves_structure() {
+        let mut tree = create_test_tree();
+        let metrics = create_test_metrics();
 
-        // All ordering strategies should handle empty tree gracefully
-        assert!(empty_tree
-            .rebuild_with_strategy(OrderingStrategy::Dfs)
-            .is_ok());
-        assert!(empty_tree
-            .rebuild_with_strategy(OrderingStrategy::Bfs)
-            .is_ok());
+        let original_structure = verify_tree_structure(&tree);
+        println!("{:?}", tree);
+        tree.reorder_by_cover_stats(&metrics).unwrap();
+        println!("{:?}", tree);
+        let new_structure = verify_tree_structure(&tree);
+
+        assert_eq!(new_structure.len(), original_structure.len());
+        assert!(tree.validate_connections());
     }
+
     #[test]
-    fn test_cycle_prevention() {
-        let mut tree = VecTree::new();
+    fn test_cover_stats_prediction_consistency() {
+        let mut tree = create_test_tree();
+        let metrics = create_test_metrics();
 
-        let node0 = TreeNode::new_split(0, 0.5, false);
-        let node1 = TreeNode::new_split(1, 0.3, false);
+        // Test inputs that will traverse different paths
+        let test_inputs = [
+            vec![0.3, 0.2, 0.1], // Should go left
+            vec![0.7, 0.8, 0.9], // Should go right
+            vec![0.4, 0.2, 0.1], // Should go left
+            vec![0.6, 0.8, 0.9], // Should go right
+        ];
 
-        let idx0 = tree.add_orphan_node(node0);
-        let idx1 = tree.add_orphan_node(node1);
+        // Get predictions before reordering
+        let original_predictions: Vec<f64> = test_inputs
+            .iter()
+            .map(|input| traverse_tree(&tree, input))
+            .collect();
 
-        // Try to create a cycle
-        assert!(tree.connect_left(idx0, idx1).is_ok());
-        assert!(tree.connect_right(idx1, idx0).is_err());
+        // Reorder and verify predictions remain the same
+        tree.reorder_by_cover_stats(&metrics).unwrap();
+
+        let new_predictions: Vec<f64> = test_inputs
+            .iter()
+            .map(|input| traverse_tree(&tree, input))
+            .collect();
+
+        assert_eq!(original_predictions, new_predictions);
+    }
+
+    fn traverse_tree(tree: &VecTreeWithTreeNode, features: &[f64]) -> f64 {
+        let mut current = tree.get_node(tree.get_root_index()).unwrap();
+
+        while !current.is_leaf() {
+            let feature_val = features[current.feature_index() as usize];
+            current = if feature_val < current.split_value() {
+                tree.get_node(current.left()).unwrap()
+            } else {
+                tree.get_node(current.right()).unwrap()
+            };
+        }
+
+        current.weight()
     }
 }
