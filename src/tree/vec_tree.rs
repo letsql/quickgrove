@@ -19,17 +19,17 @@ pub trait Traversable: Clone {
     fn default_left(&self) -> bool;
     fn feature_index(&self) -> i32;
     fn split_type(&self) -> SplitType;
-    fn split_value(&self) -> f64;
-    fn weight(&self) -> f64;
+    fn split_value(&self) -> f32;
+    fn weight(&self) -> f32;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SplitData {
     Leaf {
-        weight: f64, // 8 bytes
+        weight: f32, // 8 bytes
     },
     Split {
-        split_value: f64,   // 8 bytes
+        split_value: f32,   // 8 bytes
         feature_index: i32, // 4 bytes
         default_left: bool, // 1 byte
         split_type: SplitType, // 1 byte
@@ -42,14 +42,14 @@ impl SplitData {
         matches!(self, SplitData::Leaf { .. })
     }
 
-    fn weight(&self) -> f64 {
+    fn weight(&self) -> f32 {
         match self {
             SplitData::Leaf { weight } => *weight,
             SplitData::Split { .. } => 0.0,
         }
     }
 
-    fn split_value(&self) -> f64 {
+    fn split_value(&self) -> f32 {
         match self {
             SplitData::Split { split_value, .. } => *split_value,
             SplitData::Leaf { .. } => 0.0,
@@ -81,10 +81,10 @@ impl SplitData {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TreeNode {
     pub value: SplitData, // 0-15: 16 bytes
-    pub left: usize,      // 16-23: 8 bytes
-    pub right: usize,     // 24-31: 8 bytes
     pub index: usize,     // 32-39: 8 bytes
-} // Total: 40 bytes, aligned to 8 bytes, may cross cache lines
+    pub left: u32,      // 16-23: 4 bytes
+    pub right: u32,     // 24-31: 4 bytes
+} // Total: 32 bytes, aligned to 8 bytes
 
 impl From<SplitData> for TreeNode {
     fn from(node: SplitData) -> Self {
@@ -110,19 +110,19 @@ impl Traversable for TreeNode {
     }
 
     fn left(&self) -> usize {
-        self.left
+        self.left as usize
     }
 
     fn right(&self) -> usize {
-        self.right
+        self.right as usize
     }
 
     fn set_left(&mut self, index: usize) {
-        self.left = index;
+        self.left = index as u32;
     }
 
     fn set_right(&mut self, index: usize) {
-        self.right = index;
+        self.right = index as u32;
     }
 
     fn is_leaf(&self) -> bool {
@@ -141,17 +141,17 @@ impl Traversable for TreeNode {
         self.value.split_type()
     }
 
-    fn split_value(&self) -> f64 {
+    fn split_value(&self) -> f32 {
         self.value.split_value()
     }
 
-    fn weight(&self) -> f64 {
+    fn weight(&self) -> f32 {
         self.value.weight()
     }
 }
 
 impl TreeNode {
-    pub fn new_split(feature_index: i32, split_value: f64, default_left: bool) -> Self {
+    pub fn new_split(feature_index: i32, split_value: f32, default_left: bool) -> Self {
         Self::new(
             SplitData::Split {
                 feature_index,
@@ -163,16 +163,16 @@ impl TreeNode {
         )
     }
 
-    pub fn new_leaf(weight: f64) -> Self {
+    pub fn new_leaf(weight: f32) -> Self {
         Self::new(SplitData::Leaf { weight }, 0)
     }
 
     pub fn should_prune_right(&self, threshold: f64) -> bool {
-        threshold <= self.value.split_value() && !self.value.default_left()
+        threshold <= self.value.split_value().into() && !self.value.default_left()
     }
 
     pub fn should_prune_left(&self, threshold: f64) -> bool {
-        threshold >= self.value.split_value() && self.value.default_left()
+        threshold >= self.value.split_value().into() && self.value.default_left()
     }
 }
 
@@ -562,7 +562,7 @@ mod tests {
             "Alignment of SplitData: {}",
             std::mem::align_of::<SplitData>()
         );
-        assert_eq!(std::mem::size_of::<TreeNode>(), 40);
+        assert_eq!(std::mem::size_of::<TreeNode>(), 32);
         assert_eq!(std::mem::align_of::<TreeNode>(), 8);
     }
 
@@ -670,7 +670,7 @@ mod tests {
 
     fn verify_tree_structure(
         tree: &VecTree<TreeNode>,
-    ) -> Vec<(usize, f64, Option<usize>, Option<usize>)> {
+    ) -> Vec<(usize, f32, Option<usize>, Option<usize>)> {
         let mut structure = Vec::new();
         for i in 0..tree.len() {
             let node = tree.get_node(i).unwrap();
@@ -718,7 +718,7 @@ mod tests {
         ];
 
         // Get predictions before reordering
-        let original_predictions: Vec<f64> = test_inputs
+        let original_predictions: Vec<f32> = test_inputs
             .iter()
             .map(|input| traverse_tree(&tree, input))
             .collect();
@@ -726,7 +726,7 @@ mod tests {
         // Reorder and verify predictions remain the same
         tree.reorder_by_cover_stats(&metrics).unwrap();
 
-        let new_predictions: Vec<f64> = test_inputs
+        let new_predictions: Vec<f32> = test_inputs
             .iter()
             .map(|input| traverse_tree(&tree, input))
             .collect();
@@ -734,7 +734,7 @@ mod tests {
         assert_eq!(original_predictions, new_predictions);
     }
 
-    fn traverse_tree(tree: &VecTreeWithTreeNode, features: &[f64]) -> f64 {
+    fn traverse_tree(tree: &VecTreeWithTreeNode, features: &[f32]) -> f32 {
         let mut current = tree.get_node(tree.get_root_index()).unwrap();
 
         while !current.is_leaf() {

@@ -1,4 +1,4 @@
-use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array};
+use arrow::array::{ArrayRef, BooleanArray, Float32Array, Int64Array};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -44,12 +44,12 @@ pub mod data_loader {
     ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
-            Field::new("carat", DataType::Float64, false),
-            Field::new("depth", DataType::Float64, true),
-            Field::new("table", DataType::Float64, false),
-            Field::new("x", DataType::Float64, false),
-            Field::new("y", DataType::Float64, false),
-            Field::new("z", DataType::Float64, false),
+            Field::new("carat", DataType::Float32, false),
+            Field::new("depth", DataType::Float32, true),
+            Field::new("table", DataType::Float32, false),
+            Field::new("x", DataType::Float32, false),
+            Field::new("y", DataType::Float32, false),
+            Field::new("z", DataType::Float32, false),
             Field::new("cut_good", DataType::Boolean, false),
             Field::new("cut_ideal", DataType::Boolean, false),
             Field::new("cut_premium", DataType::Boolean, false),
@@ -67,8 +67,8 @@ pub mod data_loader {
             Field::new("clarity_vs2", DataType::Boolean, false),
             Field::new("clarity_vvs1", DataType::Boolean, false),
             Field::new("clarity_vvs2", DataType::Boolean, false),
-            Field::new("target", DataType::Float64, false),
-            Field::new("prediction", DataType::Float64, false),
+            Field::new("target", DataType::Float32, false),
+            Field::new("prediction", DataType::Float32, false),
         ]));
 
         let csv = ReaderBuilder::new(schema.clone())
@@ -107,31 +107,31 @@ pub mod data_loader {
     ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
-            Field::new("carat", DataType::Float64, false),
-            Field::new("depth", DataType::Float64, true),
-            Field::new("table", DataType::Float64, false),
-            Field::new("x", DataType::Float64, false),
-            Field::new("y", DataType::Float64, false),
-            Field::new("z", DataType::Float64, false),
-            Field::new("cut_good", DataType::Float64, false),
-            Field::new("cut_ideal", DataType::Float64, false),
-            Field::new("cut_premium", DataType::Float64, false),
-            Field::new("cut_very_good", DataType::Float64, false),
-            Field::new("color_e", DataType::Float64, false),
-            Field::new("color_f", DataType::Float64, false),
-            Field::new("color_g", DataType::Float64, false),
-            Field::new("color_h", DataType::Float64, false),
-            Field::new("color_i", DataType::Float64, false),
-            Field::new("color_j", DataType::Float64, false),
-            Field::new("clarity_if", DataType::Float64, false),
-            Field::new("clarity_si1", DataType::Float64, false),
-            Field::new("clarity_si2", DataType::Float64, false),
-            Field::new("clarity_vs1", DataType::Float64, false),
-            Field::new("clarity_vs2", DataType::Float64, false),
-            Field::new("clarity_vvs1", DataType::Float64, false),
-            Field::new("clarity_vvs2", DataType::Float64, false),
-            Field::new("target", DataType::Float64, false),
-            Field::new("prediction", DataType::Float64, false),
+            Field::new("carat", DataType::Float32, false),
+            Field::new("depth", DataType::Float32, true),
+            Field::new("table", DataType::Float32, false),
+            Field::new("x", DataType::Float32, false),
+            Field::new("y", DataType::Float32, false),
+            Field::new("z", DataType::Float32, false),
+            Field::new("cut_good", DataType::Float32, false),
+            Field::new("cut_ideal", DataType::Float32, false),
+            Field::new("cut_premium", DataType::Float32, false),
+            Field::new("cut_very_good", DataType::Float32, false),
+            Field::new("color_e", DataType::Float32, false),
+            Field::new("color_f", DataType::Float32, false),
+            Field::new("color_g", DataType::Float32, false),
+            Field::new("color_h", DataType::Float32, false),
+            Field::new("color_i", DataType::Float32, false),
+            Field::new("color_j", DataType::Float32, false),
+            Field::new("clarity_if", DataType::Float32, false),
+            Field::new("clarity_si1", DataType::Float32, false),
+            Field::new("clarity_si2", DataType::Float32, false),
+            Field::new("clarity_vs1", DataType::Float32, false),
+            Field::new("clarity_vs2", DataType::Float32, false),
+            Field::new("clarity_vvs1", DataType::Float32, false),
+            Field::new("clarity_vvs2", DataType::Float32, false),
+            Field::new("target", DataType::Float32, false),
+            Field::new("prediction", DataType::Float32, false),
         ]));
 
         let csv = ReaderBuilder::new(schema.clone())
@@ -191,9 +191,9 @@ pub mod data_loader {
             Field::new("inflight_service", DataType::Int64, false),
             Field::new("cleanliness", DataType::Int64, false),
             Field::new("departure_delay_in_minutes", DataType::Int64, false),
-            Field::new("arrival_delay_in_minutes", DataType::Float64, false),
-            Field::new("target", DataType::Float64, false),
-            Field::new("prediction", DataType::Float64, false),
+            Field::new("arrival_delay_in_minutes", DataType::Float32, false),
+            Field::new("target", DataType::Float32, false),
+            Field::new("prediction", DataType::Float32, false),
         ]));
 
         let csv = ReaderBuilder::new(schema.clone())
@@ -232,34 +232,34 @@ pub mod data_loader {
     ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>)> {
         let file = File::open(path)?;
         let schema = Arc::new(Schema::new(vec![
-            Field::new("gender", DataType::Float64, false),
-            Field::new("customer_type", DataType::Float64, false),
-            Field::new("age", DataType::Float64, false),
-            Field::new("type_of_travel", DataType::Float64, false),
-            Field::new("class", DataType::Float64, false),
-            Field::new("flight_distance", DataType::Float64, false),
-            Field::new("inflight_wifi_service", DataType::Float64, false),
+            Field::new("gender", DataType::Float32, false),
+            Field::new("customer_type", DataType::Float32, false),
+            Field::new("age", DataType::Float32, false),
+            Field::new("type_of_travel", DataType::Float32, false),
+            Field::new("class", DataType::Float32, false),
+            Field::new("flight_distance", DataType::Float32, false),
+            Field::new("inflight_wifi_service", DataType::Float32, false),
             Field::new(
                 "departure/arrival_time_convenient",
-                DataType::Float64,
+                DataType::Float32,
                 false,
             ),
-            Field::new("ease_of_online_booking", DataType::Float64, false),
-            Field::new("gate_location", DataType::Float64, false),
-            Field::new("food_and_drink", DataType::Float64, false),
-            Field::new("online_boarding", DataType::Float64, false),
-            Field::new("seat_comfort", DataType::Float64, false),
-            Field::new("inflight_entertainment", DataType::Float64, false),
-            Field::new("on_board_service", DataType::Float64, false),
-            Field::new("leg_room_service", DataType::Float64, false),
-            Field::new("baggage_handling", DataType::Float64, false),
-            Field::new("checkin_service", DataType::Float64, false),
-            Field::new("inflight_service", DataType::Float64, false),
-            Field::new("cleanliness", DataType::Float64, false),
-            Field::new("departure_delay_in_minutes", DataType::Float64, false),
-            Field::new("arrival_delay_in_minutes", DataType::Float64, false),
-            Field::new("target", DataType::Float64, false),
-            Field::new("prediction", DataType::Float64, false),
+            Field::new("ease_of_online_booking", DataType::Float32, false),
+            Field::new("gate_location", DataType::Float32, false),
+            Field::new("food_and_drink", DataType::Float32, false),
+            Field::new("online_boarding", DataType::Float32, false),
+            Field::new("seat_comfort", DataType::Float32, false),
+            Field::new("inflight_entertainment", DataType::Float32, false),
+            Field::new("on_board_service", DataType::Float32, false),
+            Field::new("leg_room_service", DataType::Float32, false),
+            Field::new("baggage_handling", DataType::Float32, false),
+            Field::new("checkin_service", DataType::Float32, false),
+            Field::new("inflight_service", DataType::Float32, false),
+            Field::new("cleanliness", DataType::Float32, false),
+            Field::new("departure_delay_in_minutes", DataType::Float32, false),
+            Field::new("arrival_delay_in_minutes", DataType::Float32, false),
+            Field::new("target", DataType::Float32, false),
+            Field::new("prediction", DataType::Float32, false),
         ]));
 
         let csv = ReaderBuilder::new(schema.clone())
@@ -299,19 +299,19 @@ pub mod feature_tree {
         Vec<String>,
         Vec<FeatureType>,
         Vec<i32>,
-        Vec<f64>,
+        Vec<f32>,
         Vec<u32>,
         Vec<u32>,
-        Vec<f64>,
+        Vec<f32>,
         Vec<bool>,
     );
 
-    pub fn generate_features(count: usize, nan_probability: f64) -> Vec<f64> {
+    pub fn generate_features(count: usize, nan_probability: f32) -> Vec<f32> {
         let mut rng = rand::thread_rng();
         (0..count)
             .map(|_| {
-                if rng.gen_bool(nan_probability) {
-                    f64::NAN
+                if rng.gen_bool(nan_probability.into()) {
+                    f32::NAN
                 } else {
                     rng.gen_range(-1.0..1.0)
                 }
@@ -338,7 +338,7 @@ pub mod feature_tree {
         for i in 0..nodes {
             if i < nodes / 2 {
                 split_indices.push(rng.gen_range(0..feature_count as i32));
-                split_conditions.push(rng.gen::<f64>());
+                split_conditions.push(rng.gen::<f32>());
                 left_children.push((i * 2 + 1) as u32);
                 right_children.push((i * 2 + 2) as u32);
                 base_weights.push(0.0);
@@ -369,8 +369,8 @@ pub mod feature_tree {
         nodes: usize,
         feature_count: usize,
         feature_offset: usize,
-        nan_probability: f64,
-    ) -> (FeatureTree, Vec<f64>) {
+        nan_probability: f32,
+    ) -> (FeatureTree, Vec<f32>) {
         let (
             feature_names,
             feature_types,
@@ -435,28 +435,28 @@ pub mod feature_tree {
     pub fn create_feature_arrays(
         num_rows: usize,
         feature_count: usize,
-        nan_prob: f64,
+        nan_prob: f32,
     ) -> Vec<ArrayRef> {
         let mut arrays = Vec::with_capacity(feature_count);
 
         for i in 0..feature_count {
             match i % 3 {
                 0 => {
-                    let values: Vec<f64> = (0..num_rows)
+                    let values: Vec<f32> = (0..num_rows)
                         .map(|_| {
-                            if rand::random::<f64>() < nan_prob {
-                                f64::NAN
+                            if rand::random::<f32>() < nan_prob {
+                                f32::NAN
                             } else {
-                                rand::random::<f64>()
+                                rand::random::<f32>()
                             }
                         })
                         .collect();
-                    arrays.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+                    arrays.push(Arc::new(Float32Array::from(values)) as ArrayRef);
                 }
                 1 => {
                     let values: Vec<i64> = (0..num_rows)
                         .map(|_| {
-                            if rand::random::<f64>() < nan_prob {
+                            if rand::random::<f32>() < nan_prob {
                                 0
                             } else {
                                 rand::random::<i64>()
@@ -465,7 +465,7 @@ pub mod feature_tree {
                         .collect();
                     let mut builder = Int64Array::builder(num_rows);
                     for value in values {
-                        if rand::random::<f64>() < nan_prob {
+                        if rand::random::<f32>() < nan_prob {
                             builder.append_null();
                         } else {
                             builder.append_value(value);
@@ -476,7 +476,7 @@ pub mod feature_tree {
                 _ => {
                     let values: Vec<bool> = (0..num_rows)
                         .map(|_| {
-                            if rand::random::<f64>() < nan_prob {
+                            if rand::random::<f32>() < nan_prob {
                                 false
                             } else {
                                 rand::random::<bool>()
@@ -485,7 +485,7 @@ pub mod feature_tree {
                         .collect();
                     let mut builder = BooleanArray::builder(num_rows);
                     for value in values {
-                        if rand::random::<f64>() < nan_prob {
+                        if rand::random::<f32>() < nan_prob {
                             builder.append_null();
                         } else {
                             builder.append_value(value);

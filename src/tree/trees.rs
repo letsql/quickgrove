@@ -4,7 +4,7 @@ use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
 use crate::tree::serde_helpers;
 use crate::tree::{FeatureTreeError, FeatureType};
-use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
+use arrow::array::{Array, ArrayRef, BooleanArray, Float32Array, Float32Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
@@ -25,12 +25,12 @@ enum PruneAction {
 
 enum NodeDefinition {
     Leaf {
-        weight: f64,
+        weight: f32,
     },
     Split {
         feature_index: i32,
         default_left: bool,
-        split_value: f64,
+        split_value: f32,
         left: usize,
         right: usize,
     },
@@ -110,7 +110,7 @@ impl FeatureTree {
             feature_types,
         }
     }
-    pub fn predict(&self, features: &[f64]) -> f64 {
+    pub fn predict(&self, features: &[f32]) -> f32 {
         let mut current = match self.tree.get_node(self.tree.get_root_index()) {
             Some(node) => node,
             None => return 0.0,
@@ -395,10 +395,10 @@ pub struct FeatureTreeBuilder {
     feature_types: Option<Arc<Vec<FeatureType>>>,
     feature_offset: usize,
     split_indices: Vec<i32>,
-    split_conditions: Vec<f64>,
+    split_conditions: Vec<f32>,
     left_children: Vec<u32>,
     right_children: Vec<u32>,
-    base_weights: Vec<f64>,
+    base_weights: Vec<f32>,
     default_left: Vec<bool>,
 }
 
@@ -445,7 +445,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn split_conditions(self, conditions: Vec<f64>) -> Self {
+    pub fn split_conditions(self, conditions: Vec<f32>) -> Self {
         Self {
             split_conditions: conditions,
             ..self
@@ -460,7 +460,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn base_weights(self, weights: Vec<f64>) -> Self {
+    pub fn base_weights(self, weights: Vec<f32>) -> Self {
         Self {
             base_weights: weights,
             ..self
@@ -531,7 +531,7 @@ impl Default for FeatureTreeBuilder {
 pub struct GradientBoostedDecisionTrees {
     pub trees: Vec<FeatureTree>,
     pub feature_names: Arc<Vec<String>>,
-    pub base_score: f64,
+    pub base_score: f32,
     pub feature_types: Arc<Vec<FeatureType>>,
     pub objective: Objective,
 }
@@ -549,14 +549,14 @@ impl Default for GradientBoostedDecisionTrees {
 }
 
 impl GradientBoostedDecisionTrees {
-    pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
+    pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float32Array, ArrowError> {
         self.predict_arrays(batch.columns())
     }
 
     fn extract_row_block(
-        feature_values: &[Vec<f64>],
+        feature_values: &[Vec<f32>],
         range: std::ops::Range<usize>,
-    ) -> Vec<Vec<f64>> {
+    ) -> Vec<Vec<f32>> {
         let num_features = feature_values.len();
         let block_size = range.end - range.start;
         let mut block = Vec::with_capacity(block_size);
@@ -572,23 +572,23 @@ impl GradientBoostedDecisionTrees {
     }
 
     #[inline]
-    pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float64Array, ArrowError> {
-        const ROW_BLOCK_SIZE: usize = 124;
+    pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float32Array, ArrowError> {
+        const ROW_BLOCK_SIZE: usize = 256;
         let num_rows = feature_arrays[0].len();
         let num_features = feature_arrays.len();
-        let mut builder = Float64Builder::with_capacity(num_rows);
+        let mut builder = Float32Builder::with_capacity(num_rows);
         let mut feature_values = Vec::with_capacity(num_features);
 
         // Existing feature value extraction code...
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
             // ... keeping all the existing match arms ...
             let values = match (array.data_type(), feature_type) {
-                (DataType::Float64, FeatureType::Float) => {
+                (DataType::Float32, FeatureType::Float) => {
                     let array = array
                         .as_any()
-                        .downcast_ref::<Float64Array>()
+                        .downcast_ref::<Float32Array>()
                         .ok_or_else(|| {
-                            ArrowError::InvalidArgumentError("Expected Float64Array".into())
+                            ArrowError::InvalidArgumentError("Expected Float32Array".into())
                         })?;
 
                     let mut values = Vec::with_capacity(num_rows);
@@ -596,7 +596,7 @@ impl GradientBoostedDecisionTrees {
                         let values_slice = array.values();
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else {
                                 values_slice[i]
                             });
@@ -616,13 +616,13 @@ impl GradientBoostedDecisionTrees {
                         let values_slice = array.values();
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else {
-                                values_slice[i] as f64
+                                values_slice[i] as f32
                             });
                         }
                     } else {
-                        values.extend(array.values().iter().map(|&x| x as f64));
+                        values.extend(array.values().iter().map(|&x| x as f32));
                     }
                     values
                 }
@@ -638,7 +638,7 @@ impl GradientBoostedDecisionTrees {
                     if let Some(null_bitmap) = array.nulls() {
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else if array.value(i) {
                                 1.0
                             } else {
@@ -676,11 +676,10 @@ impl GradientBoostedDecisionTrees {
 
                     // Extract block of rows once
                     let row_block = Self::extract_row_block(&feature_values, start_row..end_row);
-
-                    // Process this block through all trees in current batch
                     for tree in tree_batch {
                         for (row_idx, row_features) in row_block.iter().enumerate() {
-                            scores[start_row + row_idx] += tree.predict(row_features);
+                            let index = start_row + row_idx;
+                            scores[index] = scores[index] + tree.predict(row_features);
                         }
                     }
                 }
@@ -853,7 +852,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Float64Array;
+    use arrow::array::Float32Array;
     use arrow::datatypes::Field;
     use arrow::datatypes::Schema;
     use std::sync::Arc;
@@ -960,12 +959,12 @@ mod tests {
 
     fn create_sample_record_batch() -> RecordBatch {
         let schema = Schema::new(vec![
-            Field::new("age", DataType::Float64, false),
-            Field::new("income", DataType::Float64, false),
+            Field::new("age", DataType::Float32, false),
+            Field::new("income", DataType::Float32, false),
         ]);
 
-        let age_array = Float64Array::from(vec![25.0, 35.0, 35.0, 28.0]);
-        let income_array = Float64Array::from(vec![30000.0, 60000.0, 40000.0, 35000.0]);
+        let age_array = Float32Array::from(vec![25.0, 35.0, 35.0, 28.0]);
+        let income_array = Float32Array::from(vec![30000.0, 60000.0, 40000.0, 35000.0]);
 
         RecordBatch::try_new(
             Arc::new(schema),
@@ -1065,7 +1064,7 @@ mod tests {
 
         assert_eq!(predictions.len(), 4);
 
-        let expected_values: Vec<f64> = vec![-1.0, 1.0, 0.0, -1.0]
+        let expected_values: Vec<f32> = vec![-1.0, 1.0, 0.0, -1.0]
             .into_iter()
             .map(|x| 0.5 + 2.0 * x)
             .collect();
@@ -1209,12 +1208,12 @@ mod tests {
 
     fn create_mixed_type_record_batch() -> RecordBatch {
         let schema = Schema::new(vec![
-            Field::new("f0", DataType::Float64, false), // float feature
+            Field::new("f0", DataType::Float32, false), // float feature
             Field::new("f1", DataType::Int64, false),   // integer feature
             Field::new("f2", DataType::Boolean, false), // boolean feature
         ]);
 
-        let float_array = Float64Array::from(vec![0.5, 0.3, 0.7, 0.4]);
+        let float_array = Float32Array::from(vec![0.5, 0.3, 0.7, 0.4]);
         let int_array = Int64Array::from(vec![100, 50, 75, 25]);
         let bool_array = BooleanArray::from(vec![true, false, true, false]);
 
@@ -1298,21 +1297,20 @@ mod tests {
 
     #[test]
     fn test_predict_arrays_batch_processing() {
-        // Create a larger dataset to test batch processing
         let schema = Schema::new(vec![
-            Field::new("f0", DataType::Float64, false),
-            Field::new("f1", DataType::Float64, false),
+            Field::new("f0", DataType::Float32, false),
+            Field::new("f1", DataType::Float32, false),
         ]);
 
         let n_rows = 1000;
-        let f0_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) / n_rows as f64).collect();
-        let f1_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) * 2.0).collect();
+        let f0_data: Vec<f32> = (0..n_rows).map(|i| (i as f32) / n_rows as f32).collect();
+        let f1_data: Vec<f32> = (0..n_rows).map(|i| (i as f32) * 2.0).collect();
 
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
-                Arc::new(Float64Array::from(f0_data)),
-                Arc::new(Float64Array::from(f1_data)),
+                Arc::new(Float32Array::from(f0_data)),
+                Arc::new(Float32Array::from(f1_data)),
             ],
         )
         .unwrap();
@@ -1337,14 +1335,14 @@ mod tests {
     fn test_predict_arrays_error_handling() {
         let schema = Schema::new(vec![
             Field::new("f0", DataType::Utf8, false), // Unsupported type
-            Field::new("f1", DataType::Float64, false),
+            Field::new("f1", DataType::Float32, false),
         ]);
 
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
                 Arc::new(arrow::array::StringArray::from(vec!["invalid"])),
-                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float32Array::from(vec![1.0])),
             ],
         )
         .unwrap();
@@ -1403,7 +1401,7 @@ mod tests {
         let pruned1 = feature_tree
             .prune(&predicate1, &["f0".to_string(), "f1".to_string()])
             .unwrap();
-        let predicitons_after_pruning = pruned1.predict(&[f64::NAN, 0.3, 0.8]);
+        let predicitons_after_pruning = pruned1.predict(&[f32::NAN, 0.3, 0.8]);
         assert_eq!(predictions_right, predicitons_after_pruning);
     }
 }

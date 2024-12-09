@@ -44,7 +44,7 @@ impl XGBoostParser {
         })?;
 
         let split_conditions =
-            Self::extract_array::<f64>(tree_json, "split_conditions", |v| v.as_f64())?;
+            Self::extract_array::<f32>(tree_json, "split_conditions", |v| {v.as_f64().map(|x| x as f32)})?;
         let left_children = Self::extract_array::<u32>(tree_json, "left_children", |v| {
             v.as_i64().map(|x| x as u32)
         })?;
@@ -53,7 +53,7 @@ impl XGBoostParser {
             v.as_i64().map(|x| x as u32)
         })?;
 
-        let base_weights = Self::extract_array::<f64>(tree_json, "base_weights", |v| v.as_f64())?;
+        let base_weights = Self::extract_array::<f32>(tree_json, "base_weights", |v| {v.as_f64().map(|x| x as f32)})?;
 
         let default_left =
             Self::extract_array::<bool>(tree_json, "default_left", |v| v.as_i64().map(|x| x != 0))?;
@@ -71,7 +71,7 @@ impl XGBoostParser {
         })
     }
 
-    pub fn parse_base_score(json: &Value) -> Result<f64, ModelError> {
+    pub fn parse_base_score(json: &Value) -> Result<f32, ModelError> {
         let err = || ModelError::MissingField("base_score".to_string());
         json["learner"]["learner_model_param"]["base_score"]
             .as_str()
@@ -115,10 +115,10 @@ impl XGBoostParser {
 
 pub(crate) struct TreeArrays {
     pub split_indices: Vec<i32>,
-    pub split_conditions: Vec<f64>,
+    pub split_conditions: Vec<f32>,
     pub left_children: Vec<u32>,
     pub right_children: Vec<u32>,
-    pub base_weights: Vec<f64>,
+    pub base_weights: Vec<f32>,
     pub default_left: Vec<bool>,
     pub sum_hessian: Vec<f64>,
 }

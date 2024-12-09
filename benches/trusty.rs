@@ -1,6 +1,6 @@
 #![allow(unused_must_use)]
 pub mod common;
-use arrow::array::{Array, ArrayRef, Float64Array};
+use arrow::array::{Array, ArrayRef, Float32Array};
 use arrow::compute::concat;
 use arrow::record_batch::RecordBatch;
 use common::data_loader;
@@ -25,7 +25,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 fn predict_batch(
     trees: &GradientBoostedDecisionTrees,
     batches: &[RecordBatch],
-) -> Result<Float64Array> {
+) -> Result<Float32Array> {
     let predictions: Vec<ArrayRef> = batches
         .par_iter()
         .map(|batch| -> Result<ArrayRef> {
@@ -43,7 +43,7 @@ fn predict_batch(
 
     concatenated
         .as_any()
-        .downcast_ref::<Float64Array>()
+        .downcast_ref::<Float32Array>()
         .ok_or_else(|| {
             Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
         })
@@ -54,8 +54,8 @@ fn predict_batch_with_autoprune(
     trees: &GradientBoostedDecisionTrees,
     batches: &[RecordBatch],
     feature_names: &Arc<Vec<String>>,
-) -> Result<Float64Array> {
-    let predictions: Vec<Float64Array> = batches
+) -> Result<Float32Array> {
+    let predictions: Vec<Float32Array> = batches
         .par_iter()
         .map(|batch| {
             trees
@@ -75,29 +75,29 @@ fn predict_batch_with_autoprune(
 
     Ok(concatenated
         .as_any()
-        .downcast_ref::<Float64Array>()
+        .downcast_ref::<Float32Array>()
         .ok_or_else(|| {
             Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
         })?
         .clone())
 }
 
-fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Float64Array> {
-    let predictions: Vec<Float64Array> = batches
+fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Float32Array> {
+    let predictions: Vec<Float32Array> = batches
         .par_iter()
-        .map(|batch| -> Result<Float64Array> {
+        .map(|batch| -> Result<Float32Array> {
             let mut result = Vec::new();
             for row in 0..batch.num_rows() {
                 let mut row_data = Vec::new();
                 for col in batch.columns() {
-                    if let Some(array) = col.as_any().downcast_ref::<Float64Array>() {
-                        row_data.push(array.value(row));
+                    if let Some(array) = col.as_any().downcast_ref::<Float32Array>() {
+                        row_data.push(array.value(row).into());
                     }
                 }
                 result.push(Data::new_test_data(row_data, None));
             }
-            let predictions = model.predict(&result);
-            Ok(Float64Array::from(predictions))
+            let predictions= model.predict(&result);
+               Ok(Float32Array::from(Vec::from_iter(predictions.into_iter().map(|x| x as f32))))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -107,7 +107,7 @@ fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Floa
 
     Ok(concatenated
         .as_any()
-        .downcast_ref::<Float64Array>()
+        .downcast_ref::<Float32Array>()
         .ok_or_else(|| {
             Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
         })?
