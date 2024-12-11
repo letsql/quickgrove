@@ -43,8 +43,9 @@ impl XGBoostParser {
             v.as_i64().map(|x| x as i32)
         })?;
 
-        let split_conditions =
-            Self::extract_array::<f32>(tree_json, "split_conditions", |v| {v.as_f64().map(|x| x as f32)})?;
+        let split_conditions = Self::extract_array::<f32>(tree_json, "split_conditions", |v| {
+            v.as_f64().map(|x| x as f32)
+        })?;
         let left_children = Self::extract_array::<u32>(tree_json, "left_children", |v| {
             v.as_i64().map(|x| x as u32)
         })?;
@@ -53,7 +54,9 @@ impl XGBoostParser {
             v.as_i64().map(|x| x as u32)
         })?;
 
-        let base_weights = Self::extract_array::<f32>(tree_json, "base_weights", |v| {v.as_f64().map(|x| x as f32)})?;
+        let base_weights = Self::extract_array::<f32>(tree_json, "base_weights", |v| {
+            v.as_f64().map(|x| x as f32)
+        })?;
 
         let default_left =
             Self::extract_array::<bool>(tree_json, "default_left", |v| v.as_i64().map(|x| x != 0))?;
@@ -113,6 +116,7 @@ impl XGBoostParser {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct TreeArrays {
     pub split_indices: Vec<i32>,
     pub split_conditions: Vec<f32>,
@@ -120,5 +124,5 @@ pub(crate) struct TreeArrays {
     pub right_children: Vec<u32>,
     pub base_weights: Vec<f32>,
     pub default_left: Vec<bool>,
-    pub sum_hessian: Vec<f64>,
+    pub sum_hessian: Vec<f64>, // sum_hessian is nmot being used anywhere
 }

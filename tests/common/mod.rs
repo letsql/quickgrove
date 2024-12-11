@@ -138,7 +138,7 @@ pub struct PredictionComparator {
 
 impl PredictionComparator {
     pub fn new(epsilon: f32) -> Self {
-        Self { epsilon: epsilon.into() }
+        Self { epsilon }
     }
 
     pub fn compare_predictions(
@@ -223,8 +223,8 @@ impl PredictionComparator {
                         self.collect_feature_values(idx, preprocessed_batch, expected_batch);
                     differences.push(PredictionDifference {
                         index: idx,
-                        trusty_value: t_val as f32,
-                        expected_value: e_val as f32,
+                        trusty_value: t_val,
+                        expected_value: e_val,
                         features: feature_values,
                     });
                 }
@@ -400,7 +400,7 @@ pub enum DatasetType {
 
 impl ModelTester {
     pub fn new(epsilon: f32) -> Self {
-        Self {epsilon: epsilon.into() }
+        Self { epsilon }
     }
 
     pub fn test_model(

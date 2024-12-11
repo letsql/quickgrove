@@ -570,7 +570,7 @@ impl GradientBoostedDecisionTrees {
         }
         block
     }
-
+    #[allow(clippy::assign_op_pattern)]
     #[inline]
     pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float32Array, ArrowError> {
         const ROW_BLOCK_SIZE: usize = 256;
@@ -762,43 +762,6 @@ impl GradientBoostedDecisionTrees {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct NodeMetrics {
-    pub sum_hessian: f64,
-    // Can be extended with other metrics in the future
-}
-
-#[derive(Debug, Clone)]
-pub struct TreeMetricsStore {
-    metrics: HashMap<usize, NodeMetrics>,
-}
-
-impl TreeMetricsStore {
-    pub fn new() -> Self {
-        Self {
-            metrics: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, node_idx: usize, metrics: NodeMetrics) {
-        self.metrics.insert(node_idx, metrics);
-    }
-
-    pub fn get(&self, node_idx: &usize) -> Option<&NodeMetrics> {
-        self.metrics.get(node_idx)
-    }
-
-    pub fn get_sum_hessian(&self, node_idx: &usize) -> Option<f64> {
-        self.metrics.get(node_idx).map(|m| m.sum_hessian)
-    }
-}
-
-impl Default for TreeMetricsStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ModelLoader for GradientBoostedDecisionTrees {
     fn load_from_json(json: &Value) -> Result<Self, ModelError> {
         let objective_type = XGBoostParser::parse_objective(json)?;
@@ -811,18 +774,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             .map(|tree_json| {
                 let arrays = XGBoostParser::parse_tree_arrays(tree_json)?;
 
-                // Create metrics store for this tree
-                let mut metrics_store = TreeMetricsStore::new();
-                for (idx, &hessian) in arrays.sum_hessian.iter().enumerate() {
-                    metrics_store.insert(
-                        idx,
-                        NodeMetrics {
-                            sum_hessian: hessian,
-                        },
-                    );
-                }
-
-                let mut tree = FeatureTreeBuilder::new()
+                let tree = FeatureTreeBuilder::new()
                     .feature_names(feature_names.clone())
                     .feature_types(feature_types.clone())
                     .split_indices(arrays.split_indices)
@@ -832,9 +784,6 @@ impl ModelLoader for GradientBoostedDecisionTrees {
                     .default_left(arrays.default_left)
                     .build()
                     .map_err(ModelError::from)?;
-                // Reorder using cover stats
-                // Reorder tree nodes based on cover statistics
-                tree.tree.reorder_by_cover_stats(&metrics_store).unwrap();
                 Ok::<FeatureTree, ModelError>(tree)
             })
             .collect::<Result<Vec<_>, _>>()?;

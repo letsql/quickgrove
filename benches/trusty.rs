@@ -96,8 +96,10 @@ fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Floa
                 }
                 result.push(Data::new_test_data(row_data, None));
             }
-            let predictions= model.predict(&result);
-               Ok(Float32Array::from(Vec::from_iter(predictions.into_iter().map(|x| x as f32))))
+            let predictions = model.predict(&result);
+            Ok(Float32Array::from(Vec::from_iter(
+                predictions.into_iter().map(|x| x as f32),
+            )))
         })
         .collect::<Result<Vec<_>>>()?;
 
