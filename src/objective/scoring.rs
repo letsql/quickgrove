@@ -5,7 +5,7 @@ pub enum Objective {
 
 impl Objective {
     #[inline(always)]
-    pub fn compute_score(&self, leaf_weight: f64) -> f64 {
+    pub fn compute_score(&self, leaf_weight: f32) -> f32 {
         match self {
             Objective::SquaredError => leaf_weight,
         }

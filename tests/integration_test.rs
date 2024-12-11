@@ -1,5 +1,5 @@
 pub mod common;
-use arrow::array::Float64Array;
+use arrow::array::Float32Array;
 use common::{DatasetType, ModelTester, PredictionComparator};
 use std::error::Error;
 use trusty::{Condition, Predicate};
@@ -22,7 +22,7 @@ mod tests {
         )?;
 
         let expected_predictions = tester.extract_expected_predictions(&expected_results)?;
-        let trusty_predictions: Vec<Float64Array> = preprocessed_batches
+        let trusty_predictions: Vec<Float32Array> = preprocessed_batches
             .iter()
             .map(|batch| trees.predict_batch(batch))
             .collect::<Result<Vec<_>, _>>()?;

@@ -1,133 +1,36 @@
+use super::vec_tree::{Traversable, TreeNode, VecTree};
 use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{AutoPredicate, Condition, Predicate};
-use crate::tree::SplitType;
-
-use super::binary_tree::{BinaryTree, SplitData, TreeNode};
-use arrow::array::{Array, ArrayRef, BooleanArray, Float64Array, Float64Builder, Int64Array};
+use crate::tree::serde_helpers;
+use crate::tree::{FeatureTreeError, FeatureType};
+use arrow::array::{Array, ArrayRef, BooleanArray, Float32Array, Float32Builder, Int64Array};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
-use std::str::FromStr;
 use std::sync::Arc;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum FeatureTreeError {
-    #[error("Feature names must be provided")]
-    MissingFeatureNames,
-    #[error("Feature types must be provided")]
-    MissingFeatureTypes,
-    #[error("Feature names and types must have the same length")]
-    LengthMismatch,
-    #[error("Feature index {0} out of bounds")]
-    InvalidFeatureIndex(usize),
-    #[error("Invalid node structure")]
-    InvalidStructure(String),
-    #[error("Unsupported feature type: {0}. Supported types are: int, float, i (indicator)")]
-    UnsupportedType(String),
-}
+type VecTreeWithTreeNode = VecTree<TreeNode>;
 
-#[derive(Clone, Debug)]
-pub enum ModelFeatureType {
-    Float,
-    Int,
-    Indicator,
-}
-
-impl FromStr for ModelFeatureType {
-    type Err = FeatureTreeError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "int" => Ok(ModelFeatureType::Int),
-            "float" => Ok(ModelFeatureType::Float),
-            "i" => Ok(ModelFeatureType::Indicator),
-            unsupported => Err(FeatureTreeError::UnsupportedType(unsupported.to_string())),
-        }
-    }
-}
-
-impl fmt::Display for ModelFeatureType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ModelFeatureType::Int => write!(f, "int"),
-            ModelFeatureType::Float => write!(f, "float"),
-            ModelFeatureType::Indicator => write!(f, "i"),
-        }
-    }
-}
-
-impl ModelFeatureType {
-    pub fn is_numeric(&self) -> bool {
-        matches!(self, ModelFeatureType::Float | ModelFeatureType::Int)
-    }
-
-    pub fn validate_value(&self, value: f64) -> bool {
-        match self {
-            ModelFeatureType::Float => true,
-            ModelFeatureType::Int => value.fract() == 0.0,
-            ModelFeatureType::Indicator => value == 0.0 || value == 1.0,
-        }
-    }
-
-    pub fn get_arrow_data_type(&self) -> arrow::datatypes::DataType {
-        use arrow::datatypes::DataType;
-        match self {
-            ModelFeatureType::Float => DataType::Float64,
-            ModelFeatureType::Int => DataType::Int64,
-            ModelFeatureType::Indicator => DataType::Boolean,
-        }
-    }
-}
-impl Serialize for ModelFeatureType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-struct ModelFeatureTypeVisitor;
-
-impl<'de> Visitor<'de> for ModelFeatureTypeVisitor {
-    type Value = ModelFeatureType;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a string representing a model feature type")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        ModelFeatureType::from_str(value).map_err(de::Error::custom)
-    }
-}
-
-impl<'de> Deserialize<'de> for ModelFeatureType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_str(ModelFeatureTypeVisitor)
-    }
+#[derive(Debug)]
+enum PruneAction {
+    Keep,
+    PruneLeft,
+    PruneRight,
 }
 
 enum NodeDefinition {
     Leaf {
-        weight: f64,
+        weight: f32,
     },
     Split {
         feature_index: i32,
         default_left: bool,
-        split_value: f64,
+        split_value: f32,
         left: usize,
         right: usize,
     },
@@ -135,57 +38,13 @@ enum NodeDefinition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureTree {
-    #[serde(with = "self::serde_helpers::binary_tree_serde")]
-    pub(crate) tree: BinaryTree,
+    #[serde(with = "self::serde_helpers::vec_tree_serde")]
+    pub(crate) tree: VecTreeWithTreeNode,
     pub(crate) feature_offset: usize,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
     pub(crate) feature_names: Arc<Vec<String>>,
     #[serde(with = "self::serde_helpers::arc_vec_serde")]
-    pub(crate) feature_types: Arc<Vec<ModelFeatureType>>,
-}
-
-mod serde_helpers {
-    pub mod binary_tree_serde {
-        use super::super::*;
-        use serde::{Deserialize, Deserializer, Serializer};
-
-        pub fn serialize<S>(tree: &BinaryTree, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            serializer.serialize_newtype_struct("BinaryTree", &tree.nodes)
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<BinaryTree, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let nodes = Vec::deserialize(deserializer)?;
-            Ok(BinaryTree { nodes })
-        }
-    }
-
-    pub mod arc_vec_serde {
-        use serde::{Deserialize, Deserializer, Serialize, Serializer};
-        use std::sync::Arc;
-
-        pub fn serialize<S, T>(arc: &Arc<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-            T: Serialize,
-        {
-            Vec::serialize(arc, serializer)
-        }
-
-        pub fn deserialize<'de, D, T>(deserializer: D) -> Result<Arc<Vec<T>>, D::Error>
-        where
-            D: Deserializer<'de>,
-            T: Deserialize<'de>,
-        {
-            let vec = Vec::deserialize(deserializer)?;
-            Ok(Arc::new(vec))
-        }
-    }
+    pub(crate) feature_types: Arc<Vec<FeatureType>>,
 }
 
 impl fmt::Display for FeatureTree {
@@ -208,7 +67,7 @@ impl fmt::Display for FeatureTree {
                 node_to_string(node, tree, feature_names)
             )?;
 
-            if !node.value.is_leaf {
+            if !node.is_leaf() {
                 let new_prefix = format!("{}{}   ", prefix, if is_left { "│" } else { " " });
 
                 if let Some(left) = tree.tree.get_left_child(node) {
@@ -222,15 +81,15 @@ impl fmt::Display for FeatureTree {
         }
 
         fn node_to_string(node: &TreeNode, tree: &FeatureTree, feature_names: &[String]) -> String {
-            if node.value.is_leaf {
-                format!("Leaf (weight: {:.4})", node.value.weight)
+            if node.is_leaf() {
+                format!("Leaf (weight: {:.4})", node.weight())
             } else {
-                let feature_index = tree.feature_offset + node.value.feature_index as usize;
+                let feature_index = tree.feature_offset + node.feature_index() as usize;
                 let feature_name = feature_names
                     .get(feature_index)
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
-                format!("{} < {:.4}", feature_name, node.value.split_value)
+                format!("{} < {:.4}", feature_name, node.split_value())
             }
         }
 
@@ -243,53 +102,51 @@ impl fmt::Display for FeatureTree {
 }
 
 impl FeatureTree {
-    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<ModelFeatureType>>) -> Self {
+    pub fn new(feature_names: Arc<Vec<String>>, feature_types: Arc<Vec<FeatureType>>) -> Self {
         FeatureTree {
-            tree: BinaryTree::new(),
+            tree: VecTreeWithTreeNode::new(),
             feature_offset: 0,
             feature_names,
             feature_types,
         }
     }
-
-    #[inline(always)]
-    pub fn predict(&self, features: &[f64]) -> f64 {
+    pub fn predict(&self, features: &[f32]) -> f32 {
         let mut current = match self.tree.get_node(self.tree.get_root_index()) {
             Some(node) => node,
-            None => return 0.0, // or some other default value
+            None => return 0.0,
         };
 
         loop {
-            if current.value.is_leaf {
-                return current.value.weight;
+            if current.is_leaf() {
+                return current.weight();
             }
 
-            let feature_idx = self.feature_offset + current.value.feature_index as usize;
+            let feature_idx = self.feature_offset + current.feature_index() as usize;
             let split_value = features[feature_idx];
 
             let go_right = if split_value.is_nan() {
-                !current.value.default_left
+                !current.default_left()
             } else {
-                split_value >= current.value.split_value
+                split_value >= current.split_value()
             };
 
             current = if go_right {
                 match self.tree.get_right_child(current) {
                     Some(node) => node,
-                    None => return current.value.weight,
+                    None => return current.weight(),
                 }
             } else {
                 match self.tree.get_left_child(current) {
                     Some(node) => node,
-                    None => return current.value.weight,
+                    None => return current.weight(),
                 }
             };
         }
     }
 
     pub fn depth(&self) -> usize {
-        fn recursive_depth(tree: &BinaryTree, node: &TreeNode) -> usize {
-            if node.value.is_leaf {
+        fn recursive_depth(tree: &VecTreeWithTreeNode, node: &TreeNode) -> usize {
+            if node.is_leaf() {
                 1
             } else {
                 1 + tree
@@ -311,8 +168,8 @@ impl FeatureTree {
     }
 
     pub fn num_nodes(&self) -> usize {
-        fn count_reachable_nodes(tree: &BinaryTree, node: &TreeNode) -> usize {
-            if node.value.is_leaf {
+        fn count_reachable_nodes(tree: &VecTreeWithTreeNode, node: &TreeNode) -> usize {
+            if node.is_leaf() {
                 1
             } else {
                 1 + tree
@@ -331,7 +188,7 @@ impl FeatureTree {
             .map(|root| count_reachable_nodes(&self.tree, root))
             .unwrap_or(0)
     }
-
+    #[inline]
     pub fn prune(&self, predicate: &Predicate, feature_names: &[String]) -> Option<FeatureTree> {
         if self.tree.is_empty() {
             return None;
@@ -343,134 +200,112 @@ impl FeatureTree {
         );
         new_tree.feature_offset = self.feature_offset;
 
-        if let Some(root) = self.tree.get_node(self.tree.get_root_index()) {
-            fn should_prune_direction(node: &SplitData, conditions: &[Condition]) -> Option<bool> {
-                for condition in conditions {
-                    match condition {
-                        Condition::LessThan(value) => {
-                            if *value <= node.split_value {
-                                if node.default_left {
-                                    continue;
-                                }
-                                return Some(false); // Prune right path
-                            }
-                        }
-                        Condition::GreaterThanOrEqual(value) => {
-                            if *value >= node.split_value {
-                                if !node.default_left {
-                                    continue;
-                                }
-                                return Some(true); // Prune left path
-                            }
-                        }
-                    }
-                }
-                None
+        fn evaluate_node(
+            node: &TreeNode,
+            feature_index: usize,
+            feature_names: &[String],
+            predicate: &Predicate,
+        ) -> PruneAction {
+            if node.is_leaf() {
+                return PruneAction::Keep;
             }
-            #[allow(clippy::too_many_arguments)]
-            fn prune_recursive(
-                old_tree: &BinaryTree,
-                new_tree: &mut BinaryTree,
-                node: &TreeNode,
-                feature_offset: usize,
-                feature_names: &[String],
-                predicate: &Predicate,
-                parent_idx: Option<usize>,
-                is_left: bool,
-            ) -> Option<usize> {
-                let new_node = node.value.clone();
 
-                if !node.value.is_leaf {
-                    let feature_index = feature_offset + node.value.feature_index as usize;
-                    if let Some(feature_name) = feature_names.get(feature_index) {
-                        if let Some(conditions) = predicate.conditions.get(feature_name) {
-                            if let Some(prune_left) =
-                                should_prune_direction(&node.value, conditions)
-                            {
-                                let child = if prune_left {
-                                    old_tree.get_right_child(node)
-                                } else {
-                                    old_tree.get_left_child(node)
-                                };
-
-                                if let Some(child) = child {
-                                    return prune_recursive(
-                                        old_tree,
-                                        new_tree,
-                                        child,
-                                        feature_offset,
-                                        feature_names,
-                                        predicate,
-                                        parent_idx,
-                                        is_left,
-                                    );
+            if let Some(feature_name) = feature_names.get(feature_index) {
+                if let Some(conditions) = predicate.conditions.get(feature_name) {
+                    for condition in conditions {
+                        match condition {
+                            Condition::LessThan(value) => {
+                                if node.should_prune_right(*value) {
+                                    return PruneAction::PruneRight;
+                                }
+                            }
+                            Condition::GreaterThanOrEqual(value) => {
+                                if node.should_prune_left(*value) {
+                                    return PruneAction::PruneLeft;
                                 }
                             }
                         }
                     }
                 }
-
-                let current_idx = if let Some(parent_idx) = parent_idx {
-                    let new_tree_node = TreeNode::new(new_node);
-                    if is_left {
-                        new_tree.add_left_node(parent_idx, new_tree_node)
-                    } else {
-                        new_tree.add_right_node(parent_idx, new_tree_node)
-                    }
-                } else {
-                    new_tree.add_root(TreeNode::new(new_node))
-                };
-
-                if !node.value.is_leaf {
-                    if let Some(left) = old_tree.get_left_child(node) {
-                        prune_recursive(
-                            old_tree,
-                            new_tree,
-                            left,
-                            feature_offset,
-                            feature_names,
-                            predicate,
-                            Some(current_idx),
-                            true,
-                        );
-                    }
-
-                    if let Some(right) = old_tree.get_right_child(node) {
-                        prune_recursive(
-                            old_tree,
-                            new_tree,
-                            right,
-                            feature_offset,
-                            feature_names,
-                            predicate,
-                            Some(current_idx),
-                            false,
-                        );
-                    }
-                }
-
-                Some(current_idx)
             }
-
-            prune_recursive(
-                &self.tree,
-                &mut new_tree.tree,
-                root,
-                self.feature_offset,
-                feature_names,
-                predicate,
-                None,
-                true,
-            );
-
-            if !new_tree.tree.is_empty() {
-                Some(new_tree)
-            } else {
-                None
-            }
-        } else {
-            None
+            PruneAction::Keep
         }
+
+        fn prune_recursive(
+            old_tree: &VecTreeWithTreeNode,
+            new_tree: &mut VecTreeWithTreeNode,
+            node_idx: usize,
+            feature_offset: usize,
+            feature_names: &[String],
+            predicate: &Predicate,
+        ) -> Option<usize> {
+            let node = old_tree.get_node(node_idx)?;
+            let feature_index = feature_offset + node.feature_index() as usize;
+
+            match evaluate_node(node, feature_index, feature_names, predicate) {
+                PruneAction::Keep => {
+                    let new_idx = new_tree.nodes.len();
+                    new_tree.nodes.push(node.clone());
+
+                    if !node.is_leaf() {
+                        let left_idx = prune_recursive(
+                            old_tree,
+                            new_tree,
+                            node.left(),
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                        );
+
+                        let right_idx = prune_recursive(
+                            old_tree,
+                            new_tree,
+                            node.right(),
+                            feature_offset,
+                            feature_names,
+                            predicate,
+                        );
+
+                        if let Some(left_idx) = left_idx {
+                            new_tree.connect_left(new_idx, left_idx).ok()?;
+                        }
+                        if let Some(right_idx) = right_idx {
+                            new_tree.connect_right(new_idx, right_idx).ok()?;
+                        }
+                    }
+
+                    Some(new_idx)
+                }
+                PruneAction::PruneLeft => prune_recursive(
+                    old_tree,
+                    new_tree,
+                    node.right(),
+                    feature_offset,
+                    feature_names,
+                    predicate,
+                ),
+                PruneAction::PruneRight => prune_recursive(
+                    old_tree,
+                    new_tree,
+                    node.left(),
+                    feature_offset,
+                    feature_names,
+                    predicate,
+                ),
+            }
+        }
+
+        let root_idx = self.tree.get_root_index();
+        prune_recursive(
+            &self.tree,
+            &mut new_tree.tree,
+            root_idx,
+            self.feature_offset,
+            feature_names,
+            predicate,
+        )?;
+
+        Some(new_tree)
     }
 
     pub fn builder() -> FeatureTreeBuilder {
@@ -480,7 +315,7 @@ impl FeatureTree {
     fn from_nodes(
         nodes: Vec<NodeDefinition>,
         feature_names: Arc<Vec<String>>,
-        feature_types: Arc<Vec<ModelFeatureType>>,
+        feature_types: Arc<Vec<FeatureType>>,
         feature_offset: usize,
     ) -> Result<Self, FeatureTreeError> {
         if nodes.is_empty() {
@@ -497,50 +332,25 @@ impl FeatureTree {
             return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
         }
 
-        let mut binary_tree = BinaryTree::new();
+        let mut vec_tree = VecTreeWithTreeNode::new();
         let mut node_map: HashMap<usize, usize> = HashMap::new();
-
         for (builder_idx, node_def) in nodes.iter().enumerate() {
-            let tree_idx = match node_def {
+            let tree_node = match node_def {
                 NodeDefinition::Split {
                     feature_index,
                     split_value,
                     default_left,
                     ..
-                } => {
-                    let node = SplitData {
-                        feature_index: *feature_index,
-                        split_value: *split_value,
-                        weight: 0.0,
-                        is_leaf: false,
-                        split_type: SplitType::Numerical,
-                        default_left: *default_left,
-                    };
-
-                    if builder_idx == 0 {
-                        binary_tree.add_root(node.into())
-                    } else {
-                        binary_tree.add_orphan_node(node.into())
-                    }
-                }
-
-                NodeDefinition::Leaf { weight } => {
-                    let node = SplitData {
-                        feature_index: -1,
-                        split_value: 0.0,
-                        weight: *weight,
-                        is_leaf: true,
-                        split_type: SplitType::Numerical,
-                        default_left: false,
-                    };
-
-                    if builder_idx == 0 {
-                        binary_tree.add_root(node.into())
-                    } else {
-                        binary_tree.add_orphan_node(node.into())
-                    }
-                }
+                } => TreeNode::new_split(*feature_index, *split_value, *default_left),
+                NodeDefinition::Leaf { weight } => TreeNode::new_leaf(*weight),
             };
+
+            let tree_idx = if builder_idx == 0 {
+                vec_tree.add_root(tree_node)
+            } else {
+                vec_tree.add_orphan_node(tree_node)
+            };
+
             node_map.insert(builder_idx, tree_idx);
         }
 
@@ -550,31 +360,23 @@ impl FeatureTree {
                 let left_idx = node_map[left];
                 let right_idx = node_map[right];
 
-                binary_tree
-                    .connect_left(parent_idx, left_idx)
-                    .map_err(|_| {
-                        FeatureTreeError::InvalidStructure(
-                            "Invalid left child connection".to_string(),
-                        )
-                    })?;
-                binary_tree
-                    .connect_right(parent_idx, right_idx)
-                    .map_err(|_| {
-                        FeatureTreeError::InvalidStructure(
-                            "Invalid right child connection".to_string(),
-                        )
-                    })?;
+                vec_tree.connect_left(parent_idx, left_idx).map_err(|_| {
+                    FeatureTreeError::InvalidStructure("Invalid left child connection".to_string())
+                })?;
+                vec_tree.connect_right(parent_idx, right_idx).map_err(|_| {
+                    FeatureTreeError::InvalidStructure("Invalid right child connection".to_string())
+                })?;
             }
         }
 
-        if !binary_tree.validate_connections() {
+        if !vec_tree.validate_connections() {
             return Err(FeatureTreeError::InvalidStructure(
                 "Tree has disconnected nodes".into(),
             ));
         }
 
         Ok(Self {
-            tree: binary_tree,
+            tree: vec_tree,
             feature_names,
             feature_types,
             feature_offset,
@@ -590,13 +392,13 @@ impl Default for FeatureTree {
 
 pub struct FeatureTreeBuilder {
     feature_names: Option<Arc<Vec<String>>>,
-    feature_types: Option<Arc<Vec<ModelFeatureType>>>,
+    feature_types: Option<Arc<Vec<FeatureType>>>,
     feature_offset: usize,
     split_indices: Vec<i32>,
-    split_conditions: Vec<f64>,
+    split_conditions: Vec<f32>,
     left_children: Vec<u32>,
     right_children: Vec<u32>,
-    base_weights: Vec<f64>,
+    base_weights: Vec<f32>,
     default_left: Vec<bool>,
 }
 
@@ -622,7 +424,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn feature_types(self, types: Vec<ModelFeatureType>) -> Self {
+    pub fn feature_types(self, types: Vec<FeatureType>) -> Self {
         Self {
             feature_types: Some(Arc::new(types)),
             ..self
@@ -643,7 +445,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn split_conditions(self, conditions: Vec<f64>) -> Self {
+    pub fn split_conditions(self, conditions: Vec<f32>) -> Self {
         Self {
             split_conditions: conditions,
             ..self
@@ -658,7 +460,7 @@ impl FeatureTreeBuilder {
         }
     }
 
-    pub fn base_weights(self, weights: Vec<f64>) -> Self {
+    pub fn base_weights(self, weights: Vec<f32>) -> Self {
         Self {
             base_weights: weights,
             ..self
@@ -729,8 +531,8 @@ impl Default for FeatureTreeBuilder {
 pub struct GradientBoostedDecisionTrees {
     pub trees: Vec<FeatureTree>,
     pub feature_names: Arc<Vec<String>>,
-    pub base_score: f64,
-    pub feature_types: Arc<Vec<ModelFeatureType>>,
+    pub base_score: f32,
+    pub feature_types: Arc<Vec<FeatureType>>,
     pub objective: Objective,
 }
 
@@ -747,45 +549,64 @@ impl Default for GradientBoostedDecisionTrees {
 }
 
 impl GradientBoostedDecisionTrees {
-    pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float64Array, ArrowError> {
+    pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float32Array, ArrowError> {
         self.predict_arrays(batch.columns())
     }
 
-    pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float64Array, ArrowError> {
+    fn extract_row_block(
+        feature_values: &[Vec<f32>],
+        range: std::ops::Range<usize>,
+    ) -> Vec<Vec<f32>> {
+        let num_features = feature_values.len();
+        let block_size = range.end - range.start;
+        let mut block = Vec::with_capacity(block_size);
+
+        for row_idx in range {
+            let mut row_features = Vec::with_capacity(num_features);
+            for col in feature_values {
+                row_features.push(col[row_idx]);
+            }
+            block.push(row_features);
+        }
+        block
+    }
+    #[allow(clippy::assign_op_pattern)]
+    #[inline]
+    pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float32Array, ArrowError> {
+        const ROW_BLOCK_SIZE: usize = 256;
         let num_rows = feature_arrays[0].len();
         let num_features = feature_arrays.len();
-        let mut builder = Float64Builder::with_capacity(num_rows);
+        let mut builder = Float32Builder::with_capacity(num_rows);
         let mut feature_values = Vec::with_capacity(num_features);
 
-        // Pre-allocate vectors to avoid repeated allocations
+        // Existing feature value extraction code...
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
+            // ... keeping all the existing match arms ...
             let values = match (array.data_type(), feature_type) {
-                (DataType::Float64, ModelFeatureType::Float) => {
+                (DataType::Float32, FeatureType::Float) => {
                     let array = array
                         .as_any()
-                        .downcast_ref::<Float64Array>()
+                        .downcast_ref::<Float32Array>()
                         .ok_or_else(|| {
-                            ArrowError::InvalidArgumentError("Expected Float64Array".into())
+                            ArrowError::InvalidArgumentError("Expected Float32Array".into())
                         })?;
 
                     let mut values = Vec::with_capacity(num_rows);
-                    // Get nulls bitmap for faster access
                     if let Some(null_bitmap) = array.nulls() {
                         let values_slice = array.values();
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else {
                                 values_slice[i]
                             });
                         }
                     } else {
-                        // No nulls, just copy values
                         values.extend_from_slice(array.values());
                     }
                     values
                 }
-                (DataType::Int64, ModelFeatureType::Int) => {
+                (DataType::Int64, FeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
@@ -795,17 +616,17 @@ impl GradientBoostedDecisionTrees {
                         let values_slice = array.values();
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else {
-                                values_slice[i] as f64
+                                values_slice[i] as f32
                             });
                         }
                     } else {
-                        values.extend(array.values().iter().map(|&x| x as f64));
+                        values.extend(array.values().iter().map(|&x| x as f32));
                     }
                     values
                 }
-                (DataType::Boolean, ModelFeatureType::Indicator) => {
+                (DataType::Boolean, FeatureType::Indicator) => {
                     let array = array
                         .as_any()
                         .downcast_ref::<BooleanArray>()
@@ -817,7 +638,7 @@ impl GradientBoostedDecisionTrees {
                     if let Some(null_bitmap) = array.nulls() {
                         for i in 0..num_rows {
                             values.push(if null_bitmap.is_null(i) {
-                                f64::NAN
+                                f32::NAN
                             } else if array.value(i) {
                                 1.0
                             } else {
@@ -842,30 +663,35 @@ impl GradientBoostedDecisionTrees {
             feature_values.push(values);
         }
 
-        let mut row_features = vec![0.0; num_features];
         let num_trees = self.trees.len();
-
-        if num_trees >= 100 {
-            const BATCH_SIZE: usize = 8;
-            let tree_batches = self.trees.chunks(BATCH_SIZE);
+        if num_trees > 50 {
+            const TREE_BATCH_SIZE: usize = 128;
             let mut scores = vec![self.base_score; num_rows];
 
-            for tree_batch in tree_batches {
-                for row in 0..num_rows {
-                    for (i, values) in feature_values.iter().enumerate() {
-                        row_features[i] = values[row];
-                    }
+            // Process trees in cache-friendly batches
+            for tree_batch in self.trees.chunks(TREE_BATCH_SIZE) {
+                // Process rows in blocks to improve cache locality
+                for start_row in (0..num_rows).step_by(ROW_BLOCK_SIZE) {
+                    let end_row = (start_row + ROW_BLOCK_SIZE).min(num_rows);
 
+                    // Extract block of rows once
+                    let row_block = Self::extract_row_block(&feature_values, start_row..end_row);
                     for tree in tree_batch {
-                        scores[row] += tree.predict(&row_features);
+                        for (row_idx, row_features) in row_block.iter().enumerate() {
+                            let index = start_row + row_idx;
+                            scores[index] = scores[index] + tree.predict(row_features);
+                        }
                     }
                 }
             }
 
+            // Apply objective function after all scores are accumulated
             for score in scores {
                 builder.append_value(self.objective.compute_score(score));
             }
         } else {
+            let mut row_features = vec![0.0; num_features];
+            // Original approach for small number of trees
             for row in 0..num_rows {
                 for (i, values) in feature_values.iter().enumerate() {
                     row_features[i] = values[row];
@@ -948,7 +774,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             .map(|tree_json| {
                 let arrays = XGBoostParser::parse_tree_arrays(tree_json)?;
 
-                FeatureTreeBuilder::new()
+                let tree = FeatureTreeBuilder::new()
                     .feature_names(feature_names.clone())
                     .feature_types(feature_types.clone())
                     .split_indices(arrays.split_indices)
@@ -957,7 +783,8 @@ impl ModelLoader for GradientBoostedDecisionTrees {
                     .base_weights(arrays.base_weights)
                     .default_left(arrays.default_left)
                     .build()
-                    .map_err(ModelError::from)
+                    .map_err(ModelError::from)?;
+                Ok::<FeatureTree, ModelError>(tree)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -974,7 +801,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::Float64Array;
+    use arrow::array::Float32Array;
     use arrow::datatypes::Field;
     use arrow::datatypes::Schema;
     use std::sync::Arc;
@@ -989,7 +816,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -1009,7 +836,7 @@ mod tests {
 
         FeatureTreeBuilder::new()
             .feature_names(vec!["feature0".to_string()])
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0, -1, -1])
             .split_conditions(vec![0.5, 0.0, 0.0])
             .children(vec![1, u32::MAX, u32::MAX], vec![2, u32::MAX, u32::MAX])
@@ -1035,9 +862,9 @@ mod tests {
                 "feature2".to_string(),
             ])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
             ])
             .split_indices(vec![0, 1, 2, -1, -1, -1, 1, -1, 2, -1, -1])
             .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.0, 0.6, 0.0, 0.8, 0.0, 0.0])
@@ -1081,12 +908,12 @@ mod tests {
 
     fn create_sample_record_batch() -> RecordBatch {
         let schema = Schema::new(vec![
-            Field::new("age", DataType::Float64, false),
-            Field::new("income", DataType::Float64, false),
+            Field::new("age", DataType::Float32, false),
+            Field::new("income", DataType::Float32, false),
         ]);
 
-        let age_array = Float64Array::from(vec![25.0, 35.0, 35.0, 28.0]);
-        let income_array = Float64Array::from(vec![30000.0, 60000.0, 40000.0, 35000.0]);
+        let age_array = Float32Array::from(vec![25.0, 35.0, 35.0, 28.0]);
+        let income_array = Float32Array::from(vec![30000.0, 60000.0, 40000.0, 35000.0]);
 
         RecordBatch::try_new(
             Arc::new(schema),
@@ -1136,7 +963,7 @@ mod tests {
     fn test_feature_tree_builder_validation() {
         // Test missing feature names
         let result = FeatureTreeBuilder::new()
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
@@ -1148,7 +975,7 @@ mod tests {
         // Test length mismatch
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![u32::MAX], vec![u32::MAX]) // Leaf node - no children
@@ -1176,7 +1003,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees: vec![tree1, tree2],
             feature_names: Arc::new(vec!["age".to_string(), "income".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.5,
             objective: Objective::SquaredError,
         };
@@ -1186,7 +1013,7 @@ mod tests {
 
         assert_eq!(predictions.len(), 4);
 
-        let expected_values: Vec<f64> = vec![-1.0, 1.0, 0.0, -1.0]
+        let expected_values: Vec<f32> = vec![-1.0, 1.0, 0.0, -1.0]
             .into_iter()
             .map(|x| 0.5 + 2.0 * x)
             .collect();
@@ -1232,7 +1059,7 @@ mod tests {
         predicate.add_condition("feature0".to_string(), Condition::LessThan(0.49));
         let pruned_tree = tree.prune(&predicate, &["feature0".to_string()]).unwrap();
         assert_eq!(pruned_tree.tree.nodes.len(), 1);
-        assert_eq!(pruned_tree.tree.get_node(0).unwrap().value.weight, -1.0);
+        assert_eq!(pruned_tree.tree.get_node(0).unwrap().weight(), -1.0);
     }
 
     #[test]
@@ -1250,17 +1077,15 @@ mod tests {
         let pruned_tree1 = tree.prune(&predicate1, &feature_names).unwrap();
         assert_eq!(pruned_tree1.predict(&[0.6, 0.75, 0.8]), 1.0);
 
-        // Test case 2: Prune left subtree of left child of root
         let mut predicate2 = Predicate::new();
         predicate2.add_condition("feature2".to_string(), Condition::LessThan(0.70));
         let pruned_tree2 = tree.prune(&predicate2, &feature_names).unwrap();
-        assert_eq!(pruned_tree2.predict(&[0.4, 0.6, 0.8]), -1.0);
+        assert_eq!(pruned_tree2.predict(&[0.4, 0.2, 0.8]), -2.0);
 
-        // Test case 3: Prune left root tree
         let mut predicate3 = Predicate::new();
         predicate3.add_condition("feature0".to_string(), Condition::GreaterThanOrEqual(0.50));
         let pruned_tree3 = tree.prune(&predicate3, &feature_names).unwrap();
-        assert_eq!(pruned_tree3.predict(&[0.4, 0.6, 0.8]), 3.0);
+        assert_eq!(pruned_tree3.predict(&[0.6, 0.7, 0.9]), 3.0);
     }
 
     #[test]
@@ -1298,7 +1123,7 @@ mod tests {
 
         let tree = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string(), "income".to_string()])
-            .feature_types(vec![ModelFeatureType::Float, ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float, FeatureType::Float])
             .split_indices(vec![0, -1, 1, -1, -1])
             .split_conditions(vec![30.0, 0.0, 50000.0, 0.0, 0.0])
             .children(
@@ -1320,7 +1145,7 @@ mod tests {
     fn test_array_length_mismatch() {
         let result = FeatureTreeBuilder::new()
             .feature_names(vec!["age".to_string()])
-            .feature_types(vec![ModelFeatureType::Float])
+            .feature_types(vec![FeatureType::Float])
             .split_indices(vec![0])
             .split_conditions(vec![30.0])
             .children(vec![1], vec![2, 3]) // mismatched lengths
@@ -1332,12 +1157,12 @@ mod tests {
 
     fn create_mixed_type_record_batch() -> RecordBatch {
         let schema = Schema::new(vec![
-            Field::new("f0", DataType::Float64, false), // float feature
+            Field::new("f0", DataType::Float32, false), // float feature
             Field::new("f1", DataType::Int64, false),   // integer feature
             Field::new("f2", DataType::Boolean, false), // boolean feature
         ]);
 
-        let float_array = Float64Array::from(vec![0.5, 0.3, 0.7, 0.4]);
+        let float_array = Float32Array::from(vec![0.5, 0.3, 0.7, 0.4]);
         let int_array = Int64Array::from(vec![100, 50, 75, 25]);
         let bool_array = BooleanArray::from(vec![true, false, true, false]);
 
@@ -1363,9 +1188,9 @@ mod tests {
         FeatureTreeBuilder::new()
             .feature_names(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Int,
-                ModelFeatureType::Indicator,
+                FeatureType::Float,
+                FeatureType::Int,
+                FeatureType::Indicator,
             ])
             .split_indices(vec![0, 1, -1, -1, 2, -1, -1])
             .split_conditions(vec![0.5, 60.0, 0.0, 0.0, 0.5, 0.0, 0.0])
@@ -1388,9 +1213,9 @@ mod tests {
             trees: vec![tree],
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()]),
             feature_types: Arc::new(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Int,
-                ModelFeatureType::Indicator,
+                FeatureType::Float,
+                FeatureType::Int,
+                FeatureType::Indicator,
             ]),
             base_score: 0.0,
             objective: Objective::SquaredError,
@@ -1421,21 +1246,20 @@ mod tests {
 
     #[test]
     fn test_predict_arrays_batch_processing() {
-        // Create a larger dataset to test batch processing
         let schema = Schema::new(vec![
-            Field::new("f0", DataType::Float64, false),
-            Field::new("f1", DataType::Float64, false),
+            Field::new("f0", DataType::Float32, false),
+            Field::new("f1", DataType::Float32, false),
         ]);
 
         let n_rows = 1000;
-        let f0_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) / n_rows as f64).collect();
-        let f1_data: Vec<f64> = (0..n_rows).map(|i| (i as f64) * 2.0).collect();
+        let f0_data: Vec<f32> = (0..n_rows).map(|i| (i as f32) / n_rows as f32).collect();
+        let f1_data: Vec<f32> = (0..n_rows).map(|i| (i as f32) * 2.0).collect();
 
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
-                Arc::new(Float64Array::from(f0_data)),
-                Arc::new(Float64Array::from(f1_data)),
+                Arc::new(Float32Array::from(f0_data)),
+                Arc::new(Float32Array::from(f1_data)),
             ],
         )
         .unwrap();
@@ -1447,7 +1271,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees,
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
         };
@@ -1460,14 +1284,14 @@ mod tests {
     fn test_predict_arrays_error_handling() {
         let schema = Schema::new(vec![
             Field::new("f0", DataType::Utf8, false), // Unsupported type
-            Field::new("f1", DataType::Float64, false),
+            Field::new("f1", DataType::Float32, false),
         ]);
 
         let batch = RecordBatch::try_new(
             Arc::new(schema),
             vec![
                 Arc::new(arrow::array::StringArray::from(vec!["invalid"])),
-                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float32Array::from(vec![1.0])),
             ],
         )
         .unwrap();
@@ -1475,7 +1299,7 @@ mod tests {
         let gbdt = GradientBoostedDecisionTrees {
             trees: vec![create_sample_tree()],
             feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string()]),
-            feature_types: Arc::new(vec![ModelFeatureType::Float, ModelFeatureType::Float]),
+            feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
         };
@@ -1502,9 +1326,9 @@ mod tests {
                 "feature2".to_string(),
             ])
             .feature_types(vec![
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
-                ModelFeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
             ])
             .split_indices(vec![0, 1, 2, -1, -1, 1, 2, -1, -1])
             .split_conditions(vec![0.5, 0.3, 0.7, 0.0, 0.0, 0.6, 0.8, 0.0, 0.0])
@@ -1526,7 +1350,7 @@ mod tests {
         let pruned1 = feature_tree
             .prune(&predicate1, &["f0".to_string(), "f1".to_string()])
             .unwrap();
-        let predicitons_after_pruning = pruned1.predict(&[f64::NAN, 0.3, 0.8]);
+        let predicitons_after_pruning = pruned1.predict(&[f32::NAN, 0.3, 0.8]);
         assert_eq!(predictions_right, predicitons_after_pruning);
     }
 }

@@ -1,4 +1,4 @@
-use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array};
+use arrow::array::{ArrayRef, BooleanArray, Float32Array, Int64Array};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
@@ -17,12 +17,12 @@ pub fn read_diamonds_csv_to_split_batches(
 ) -> Result<(Vec<RecordBatch>, Vec<RecordBatch>), Box<dyn Error>> {
     let file = File::open(path)?;
     let schema = Arc::new(Schema::new(vec![
-        Field::new("carat", DataType::Float64, false),
-        Field::new("depth", DataType::Float64, true),
-        Field::new("table", DataType::Float64, false),
-        Field::new("x", DataType::Float64, false),
-        Field::new("y", DataType::Float64, false),
-        Field::new("z", DataType::Float64, false),
+        Field::new("carat", DataType::Float32, false),
+        Field::new("depth", DataType::Float32, true),
+        Field::new("table", DataType::Float32, false),
+        Field::new("x", DataType::Float32, false),
+        Field::new("y", DataType::Float32, false),
+        Field::new("z", DataType::Float32, false),
         Field::new("cut_good", DataType::Boolean, false),
         Field::new("cut_ideal", DataType::Boolean, false),
         Field::new("cut_premium", DataType::Boolean, false),
@@ -41,7 +41,7 @@ pub fn read_diamonds_csv_to_split_batches(
         Field::new("clarity_vvs1", DataType::Boolean, false),
         Field::new("clarity_vvs2", DataType::Boolean, false),
         Field::new("target", DataType::Int64, false),
-        Field::new("prediction", DataType::Float64, false),
+        Field::new("prediction", DataType::Float32, false),
     ]));
 
     let csv = ReaderBuilder::new(schema.clone())
@@ -99,9 +99,9 @@ pub fn read_airline_csv_to_split_batches(
         Field::new("inflight_service", DataType::Int64, false),
         Field::new("cleanliness", DataType::Int64, false),
         Field::new("departure_delay_in_minutes", DataType::Int64, false),
-        Field::new("arrival_delay_in_minutes", DataType::Float64, false),
+        Field::new("arrival_delay_in_minutes", DataType::Float32, false),
         Field::new("target", DataType::Int64, false),
-        Field::new("prediction", DataType::Float64, false),
+        Field::new("prediction", DataType::Float32, false),
     ]));
 
     let csv = ReaderBuilder::new(schema.clone())
@@ -133,18 +133,18 @@ pub fn read_airline_csv_to_split_batches(
 }
 
 pub struct PredictionComparator {
-    epsilon: f64,
+    epsilon: f32,
 }
 
 impl PredictionComparator {
-    pub fn new(epsilon: f64) -> Self {
+    pub fn new(epsilon: f32) -> Self {
         Self { epsilon }
     }
 
     pub fn compare_predictions(
         &self,
-        trusty_predictions: &[Float64Array],
-        expected_predictions: &[&Float64Array],
+        trusty_predictions: &[Float32Array],
+        expected_predictions: &[&Float32Array],
         preprocessed_batches: &[RecordBatch],
         expected_results: &[RecordBatch],
     ) -> Result<(), Box<dyn Error>> {
@@ -169,8 +169,8 @@ impl PredictionComparator {
     fn validate_batch_predictions(
         &self,
         batch_idx: usize,
-        trusty: &Float64Array,
-        expected: &Float64Array,
+        trusty: &Float32Array,
+        expected: &Float32Array,
         preprocessed_batch: &RecordBatch,
         expected_batch: &RecordBatch,
     ) -> Result<(), Box<dyn Error>> {
@@ -209,8 +209,8 @@ impl PredictionComparator {
     fn collect_differences(
         &self,
         _batch_idx: usize,
-        trusty: &Float64Array,
-        expected: &Float64Array,
+        trusty: &Float32Array,
+        expected: &Float32Array,
         preprocessed_batch: &RecordBatch,
         expected_batch: &RecordBatch,
     ) -> Vec<PredictionDifference> {
@@ -303,8 +303,8 @@ impl PredictionComparator {
 
 struct PredictionDifference {
     index: usize,
-    trusty_value: f64,
-    expected_value: f64,
+    trusty_value: f32,
+    expected_value: f32,
     features: Vec<FeatureComparison>,
 }
 
@@ -320,13 +320,13 @@ impl PredictionDifference {
             Cell::new("Trusty Prediction"),
             Cell::new(&format!("{:.6}", self.trusty_value)),
             Cell::new(""),
-            Cell::new("Float64"),
+            Cell::new("Float32"),
         ]));
         table.add_row(Row::new(vec![
             Cell::new("Expected Prediction"),
             Cell::new(&format!("{:.6}", self.expected_value)),
             Cell::new(""),
-            Cell::new("Float64"),
+            Cell::new("Float32"),
         ]));
         table.add_row(Row::new(vec![
             Cell::new("Difference"),
@@ -374,7 +374,7 @@ fn get_value_at_index(array: &ArrayRef, idx: usize) -> String {
         return "null".to_string();
     }
 
-    if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
+    if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
         return format!("{:.6}", float_array.value(idx));
     }
 
@@ -389,7 +389,7 @@ fn get_value_at_index(array: &ArrayRef, idx: usize) -> String {
     format!("unsupported type: {}", array.data_type())
 }
 pub struct ModelTester {
-    epsilon: f64,
+    epsilon: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -399,7 +399,7 @@ pub enum DatasetType {
 }
 
 impl ModelTester {
-    pub fn new(epsilon: f64) -> Self {
+    pub fn new(epsilon: f32) -> Self {
         Self { epsilon }
     }
 
@@ -453,7 +453,7 @@ impl ModelTester {
     pub fn extract_expected_predictions<'a>(
         &self,
         expected_results: &'a [RecordBatch],
-    ) -> Result<Vec<&'a Float64Array>, Box<dyn Error>> {
+    ) -> Result<Vec<&'a Float32Array>, Box<dyn Error>> {
         expected_results
             .iter()
             .map(|batch| {
@@ -462,8 +462,8 @@ impl ModelTester {
                     .ok_or_else(|| "Column 'prediction' not found".into())
                     .and_then(|col| {
                         col.as_any()
-                            .downcast_ref::<Float64Array>()
-                            .ok_or_else(|| "Failed to downcast to Float64Array".into())
+                            .downcast_ref::<Float32Array>()
+                            .ok_or_else(|| "Failed to downcast to Float32Array".into())
                     })
             })
             .collect()
@@ -473,7 +473,7 @@ impl ModelTester {
         &self,
         trees: &GradientBoostedDecisionTrees,
         preprocessed_batches: &[RecordBatch],
-    ) -> Result<Vec<Float64Array>, Box<dyn Error>> {
+    ) -> Result<Vec<Float32Array>, Box<dyn Error>> {
         preprocessed_batches
             .iter()
             .map(|batch| {
