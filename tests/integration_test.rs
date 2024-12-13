@@ -215,4 +215,54 @@ mod tests {
             &expected_results,
         )
     }
+
+    #[test]
+    fn test_model_binary_logistic_diamonds() -> Result<(), Box<dyn Error>> {
+        let epsilon = 1e-1;
+        let tester = ModelTester::new(epsilon);
+
+        let trees = tester
+            .load_model("tests/models/binary:logistic/diamonds_model_trees_100_mixed.json")?;
+        let (preprocessed_batches, expected_results) = tester.load_dataset(
+            "tests/data/binary:logistic/diamonds_data_filtered_trees_100_mixed.csv",
+            1024,
+            DatasetType::Diamonds,
+        )?;
+
+        let expected_predictions = tester.extract_expected_predictions(&expected_results)?;
+        let trusty_predictions: Vec<Float32Array> = preprocessed_batches
+            .iter()
+            .map(|batch| trees.predict_batch(batch))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert_eq!(
+            trusty_predictions.len(),
+            expected_predictions.len(),
+            "Number of prediction batches doesn't match: trusty={}, expected={}",
+            trusty_predictions.len(),
+            expected_predictions.len()
+        );
+
+        for (i, (trusty, expected)) in trusty_predictions
+            .iter()
+            .zip(expected_predictions.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                trusty.len(),
+                expected.len(),
+                "Batch {} size mismatch: trusty={}, expected={}",
+                i,
+                trusty.len(),
+                expected.len()
+            );
+        }
+
+        PredictionComparator::new(epsilon).compare_predictions(
+            &trusty_predictions,
+            &expected_predictions,
+            &preprocessed_batches,
+            &expected_results,
+        )
+    }
 }
