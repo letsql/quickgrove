@@ -1,7 +1,7 @@
 use super::vec_tree::{Traversable, TreeNode, VecTree};
 use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
-use crate::predicates::{AutoPredicate, Condition, Predicate};
+use crate::predicates::{Condition, Predicate};
 use crate::tree::serde_helpers;
 use crate::tree::{FeatureTreeError, FeatureType};
 use arrow::array::{Array, ArrayRef, BooleanArray, Float32Array, Float32Builder, Int64Array};
@@ -730,16 +730,6 @@ impl GradientBoostedDecisionTrees {
             base_score: self.base_score,
             objective: self.objective.clone(),
         }
-    }
-
-    pub fn auto_prune(
-        &self,
-        batch: &RecordBatch,
-        feature_names: &Arc<Vec<String>>,
-    ) -> Result<Self, ArrowError> {
-        let auto_predicate = AutoPredicate::new(Arc::clone(feature_names));
-        let predicate = auto_predicate.generate_predicate(batch)?;
-        Ok(self.prune(&predicate))
     }
 
     pub fn print_tree_info(&self) {

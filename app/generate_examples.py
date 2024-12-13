@@ -401,7 +401,7 @@ def main():
     data_dir = Path(args.data_dir)
     base_dir = Path(args.base_dir)
     
-    for objective_name in [ObjectiveType.SQUARED_ERROR]:
+    for objective_name in [ObjectiveType.SQUARED_ERROR, ObjectiveType.LOGISTIC, ObjectiveType.BINARY_LOGISTIC]:
         for dataset_name, processor_cls in processors.items():
             for force_float64 in [False, True]:
                 for variant in DataVariant:

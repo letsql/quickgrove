@@ -1,6 +1,7 @@
 #[derive(Debug, Clone)]
 pub enum Objective {
     SquaredError,
+    Logistic,
 }
 
 impl Objective {
@@ -8,6 +9,7 @@ impl Objective {
     pub fn compute_score(&self, leaf_weight: f32) -> f32 {
         match self {
             Objective::SquaredError => leaf_weight,
+            Objective::Logistic => 1.0 / (1.0 + (-leaf_weight).exp()),
         }
     }
 }

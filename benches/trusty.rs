@@ -50,38 +50,6 @@ fn predict_batch(
         .cloned()
 }
 
-fn predict_batch_with_autoprune(
-    trees: &GradientBoostedDecisionTrees,
-    batches: &[RecordBatch],
-    feature_names: &Arc<Vec<String>>,
-) -> Result<Float32Array> {
-    let predictions: Vec<Float32Array> = batches
-        .par_iter()
-        .map(|batch| {
-            trees
-                .auto_prune(batch, feature_names)
-                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
-                .and_then(|auto_pruned| {
-                    auto_pruned
-                        .predict_batch(batch)
-                        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
-                })
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    let arrays_ref: Vec<&dyn Array> = predictions.iter().map(|a| a as &dyn Array).collect();
-    let concatenated =
-        concat(&arrays_ref).map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
-
-    Ok(concatenated
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .ok_or_else(|| {
-            Box::<dyn Error + Send + Sync>::from("Failed to downcast concatenated array")
-        })?
-        .clone())
-}
-
 fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Float32Array> {
     let predictions: Vec<Float32Array> = batches
         .par_iter()
@@ -151,16 +119,6 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
         total_rows
     );
 
-    let auto_pruned_predictions =
-        predict_batch_with_autoprune(&trees, &data_batches, &Arc::new(vec!["carat".to_string()]))?;
-    assert_eq!(
-        auto_pruned_predictions.len(),
-        total_rows,
-        "Auto-pruned predictions length {} doesn't match total rows {}",
-        auto_pruned_predictions.len(),
-        total_rows
-    );
-
     c.bench_function("trusty/diamonds/baseline", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&trees, &data_batches).unwrap() })
@@ -171,16 +129,6 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
     });
 
-    c.bench_function("trusty/diamonds/auto_pruning", |b| {
-        b.to_async(&rt).iter(|| async {
-            predict_batch_with_autoprune(
-                &trees,
-                &data_batches,
-                &Arc::new(vec!["carat".to_string()]),
-            )
-            .unwrap()
-        })
-    });
     Ok(())
 }
 
@@ -214,17 +162,6 @@ fn benchmark_airline_prediction(c: &mut Criterion) -> Result<()> {
     group.bench_function("manual_pruning", |b| {
         b.to_async(&rt)
             .iter(|| async { predict_batch(&pruned_trees, &data_batches).unwrap() })
-    });
-
-    group.bench_function("auto_pruning", |b| {
-        b.to_async(&rt).iter(|| async {
-            predict_batch_with_autoprune(
-                &trees,
-                &data_batches,
-                &Arc::new(vec!["online_boarding".to_string()]),
-            )
-            .unwrap()
-        })
     });
 
     group.finish();
