@@ -108,6 +108,7 @@ impl XGBoostParser {
 
         match objective_name {
             "reg:squarederror" => Ok(Objective::SquaredError),
+            "reg:logistic" => Ok(Objective::Logistic),
             _ => Err(ModelError::InvalidFieldType(format!(
                 "Unsupported objective: {}",
                 objective_name
