@@ -106,6 +106,22 @@
         poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
           projectDir = ./.;
           preferWheels = true;
+          nativeBuildInputs = [ pkgs.maturin rustToolchain cargoDeps pkgs.pkg-config ];
+          # we need to add the following buildInputs to ensure that the build environment works with maturin
+          buildInputs = with pkgs; [
+            openssl
+            cacert
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+            pkgs.darwin.apple_sdk.frameworks.Security
+          ];
+
+          preBuild = ''
+            export CARGO_HOME="$PWD/.cargo"
+            export RUSTUP_HOME="$PWD/.rustup"
+            mkdir -p $CARGO_HOME
+            
+          '';
           overrides = pkgs.poetry2nix.overrides.withDefaults
             (self: super: {
               atpublic = super.atpublic.overridePythonAttrs
@@ -219,6 +235,7 @@
             rustToolchain
             pythonEnv
             pkgs.poetry
+            pkgs.maturin
             # add pre-commit dependencies
             pkgs.ruff
             pkgs.rustfmt

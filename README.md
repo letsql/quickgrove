@@ -28,17 +28,14 @@ nix develop
 
 ```rust
 use arrow::record_batch::RecordBatch;
-use trusty::{Trees, Predicate, Condition};
+use trusty::{GradientBoostedDecisionTrees, Predicate, Condition};
 
 let model_json = std::fs::read_to_string("model.json")?;
 let model_data: serde_json::Value = serde_json::from_str(&model_json)?;
-let model = Trees::load(&model_data)?;
+let model = GradientBoostedDecisionTrees::load(&model_data)?;
 
 let predictions = model.predict_batch(&batch)?;
 
-let mut predicate = Predicate::new();
-predicate.add_condition("feature0".to_string(), Condition::LessThan(0.5));
-let pruned_model = model.prune(&predicate);
 
 model.print_tree_info();
 ```
@@ -57,10 +54,12 @@ nix run .#single-prediction-example
 
 ### Advanced Features
 
-#### Automated Model Optimization
+#### Predicate-based Tree Pruning
+
 ```rust
-// Auto-prune based on data distribution patterns
-let optimized_model = model.auto_prune(&batch, &feature_names)?;
+let mut predicate = Predicate::new();
+predicate.add_condition("feature0".to_string(), Condition::LessThan(0.5));
+let pruned_model = model.prune(&predicate);
 ```
 
 #### Model Introspection
@@ -74,8 +73,8 @@ println!("{}", tree);
 ### Model Support
 
 - [x] XGBoost reg:squarederror
-- [ ] XGBoost reg:logistic
-- [ ] XGBoost binary:logistic
+- [x] XGBoost reg:logistic
+- [x] XGBoost binary:logistic
 - [ ] XGBoost ranking objectives
   - [ ] pairwise
   - [ ] ndcg

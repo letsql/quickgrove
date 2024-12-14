@@ -6,11 +6,15 @@ name = "trusty"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "trusty"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+pyo3 = { version = "=0.22.6", features = ["extension-module"] }
+arrow = { version = "53.3.0", features = ["pyarrow"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-arrow = "53.0"
 thiserror = "2.0.3"
 
 [dev-dependencies]
@@ -25,6 +29,7 @@ rand = "0.8.5"
 [[bench]]
 name = "trusty"
 harness = false
+
 [[bench]]
 name = "predict"
 harness = false
