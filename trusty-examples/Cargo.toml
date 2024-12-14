@@ -12,7 +12,7 @@ name = "single_prediction"
 path = "single_prediction.rs"
 
 [dependencies]
-arrow = "53.1.0"
+arrow = { version = "53.3.0", features = ["pyarrow"] }
 serde_json = "1.0"
 datafusion = { version = "43.0.0" }
 datafusion-common = "43.0.0"
