@@ -2,9 +2,9 @@
 .direnv
 result
 target
-python/trusty/*.so
+*.so
 data
-.envrc.anthropic
+.envrc.*
 .pre-commit-config.yaml
 .idea
 .cargo
