@@ -2,6 +2,11 @@
 .direnv
 result
 target
+python/trusty/*.so
+data
 .envrc.anthropic
 .pre-commit-config.yaml
 .idea
+.cargo
+.pytest_cache
+__pycache__

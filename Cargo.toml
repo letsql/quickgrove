@@ -10,6 +10,10 @@ edition = "2021"
 name = "trusty"
 crate-type = ["cdylib", "rlib"]
 
+[package.metadata.maturin]
+name = "trusty"
+python-source = "python"
+
 [dependencies]
 pyo3 = { version = "=0.22.6", features = ["extension-module"] }
 arrow = { version = "53.3.0", features = ["pyarrow"] }
