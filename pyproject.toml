@@ -13,11 +13,12 @@ ipython = "^8.28.0"
 scikit-learn = "^1.5.2"
 attrs = "^24.2.0"
 pyarrow = "17.0.0"
-
 maturin = "^1.7.8"
 
+pytest = "^8.3.4"
 [tool.maturin]
-python-source = "src/lib.rs"
+python-source = "python"
+module-name = "trusty._internal"
 features = ["pyo3/extension-module"]
 
 [tool.poetry.scripts]

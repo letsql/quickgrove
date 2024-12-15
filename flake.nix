@@ -139,6 +139,42 @@
               });
             });
         };
+        buildMaturinScript = pkgs.writeScriptBin "build-maturin" ''
+          #!${pkgs.stdenv.shell}
+          echo "Building maturin wheel..."
+          maturin build
+            
+          WHEEL_PATH="target/wheels"
+          WHEEL_FILE=$(ls ''${WHEEL_PATH}/*.whl | head -n 1)
+          PYTHON_DIR="python/trusty"
+          TMP_DIR="tmp_wheel"
+            
+          # Create temporary directory
+          mkdir -p ''${TMP_DIR}
+            
+          # Unzip the wheel to temporary directory
+          ${pkgs.unzip}/bin/unzip -q "''${WHEEL_FILE}" -d ''${TMP_DIR}
+            
+          # Find the .so file (works for both .so and .dylib)
+          SO_FILE=$(find ''${TMP_DIR} -name "*.so" -o -name "*.dylib")
+            
+          if [ -z "''${SO_FILE}" ]; then
+              echo "No .so or .dylib file found in wheel"
+              exit 1
+          fi
+            
+          # Create the destination directory if it doesn't exist
+          mkdir -p "''${PYTHON_DIR}"
+            
+          # Copy the .so file to the Python package directory
+          cp "''${SO_FILE}" "''${PYTHON_DIR}/"
+            
+          echo "Copied $(basename "''${SO_FILE}") to ''${PYTHON_DIR}/"
+            
+          # Clean up
+          rm -rf ''${TMP_DIR}
+        '';
+
         processScript = pkgs.writeScriptBin "prepare-benchmarks" ''
           #!${pkgs.stdenv.shell}
           
@@ -228,7 +264,6 @@
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
         };
-
         devShells.default = pkgs.mkShell {
           inputsFrom = [ trusty ];
           buildInputs = [
@@ -241,9 +276,11 @@
             pkgs.rustfmt
             pkgs.nixpkgs-fmt
             processScript
+            buildMaturinScript
           ];
           shellHook = ''
             ${pre-commit-check.shellHook}
+            echo "Run 'build-maturin' to rebuild and install the package"
           '';
         };
       });
