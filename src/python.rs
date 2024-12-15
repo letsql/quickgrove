@@ -122,11 +122,3 @@ impl PyGradientBoostedDecisionTrees {
 pub fn load_model(model_json: &str) -> PyResult<PyGradientBoostedDecisionTrees> {
     PyGradientBoostedDecisionTrees::new(model_json)
 }
-
-// #[pymodule]
-// fn _internal(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-//     m.add_wrapped(wrap_pyfunction!(load_model))?;
-//     m.add_class::<PyGradientBoostedDecisionTrees>()?;
-//     m.add_class::<Feature>()?;
-//     Ok(())
-// }
