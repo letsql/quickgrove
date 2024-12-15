@@ -198,7 +198,11 @@
           hooks = {
             nixpkgs-fmt.enable = true;
             rustfmt.enable = true;
-            ruff.enable = true;
+            ruff = {
+              enable = true;
+              files = "\\.py$";
+              excludes = [ ];
+            };
             clippy = {
               enable = true;
               entry = toString clippy-hook;
