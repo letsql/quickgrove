@@ -58,7 +58,6 @@ impl PyGradientBoostedDecisionTrees {
             let py_arrow_type = py_batch.extract::<PyArrowType<RecordBatch>>()?;
             let record_batch = py_arrow_type.0;
 
-            // convert Float64 arrays to Float32
             let arrays: Vec<ArrayRef> = record_batch
                 .columns()
                 .iter()

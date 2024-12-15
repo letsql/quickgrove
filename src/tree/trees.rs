@@ -15,6 +15,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+const CHUNK_SIZE: usize = 1024;
+const TREE_BATCH_SIZE: usize = 16;
+
 type VecTreeWithTreeNode = VecTree<TreeNode>;
 
 #[derive(Debug)]
