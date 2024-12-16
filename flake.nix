@@ -128,6 +128,16 @@
           buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
           ];
+          overrides = pkgs.poetry2nix.overrides.withDefaults
+            (self: super: {
+              xgboost = super.xgboost.overridePythonAttrs (old: { } // pkgs.lib.attrsets.optionalAttrs pkgs.stdenv.isDarwin {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ super.cmake ];
+                cmakeDir = "../cpp_src";
+                preBuild = ''
+                  cd ..
+                '';
+              });
+            });
         };
 
         poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
