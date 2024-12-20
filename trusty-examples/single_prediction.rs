@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model_data = load_model_data(MODEL_PATH)?;
     let batch = create_record_batch()?;
     let trees = GradientBoostedDecisionTrees::load_from_json(&model_data)?;
-    let predictions: PrimitiveArray<Float32Type> = trees.predict_batch(&batch)?;
+    let predictions: PrimitiveArray<Float32Type> = trees.predict_batches(&[batch.clone()])?;
     println!("Regular tree prediction successful");
 
     let mut predicate = Predicate::new();
@@ -26,7 +26,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     predicate.add_condition("depth".to_string(), Condition::GreaterThanOrEqual(61.0));
 
     let pruned_trees = trees.prune(&predicate);
-    let pruned_predictions: PrimitiveArray<Float32Type> = pruned_trees.predict_batch(&batch)?;
+    let pruned_predictions: PrimitiveArray<Float32Type> =
+        pruned_trees.predict_batches(&[batch.clone()])?;
     println!("Pruned tree prediction successful");
     println!("Original Tree: {:}", trees.trees[0]);
     println!("Pruned Tree: {:}", pruned_trees.trees[0]);

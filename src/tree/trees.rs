@@ -8,11 +8,15 @@ use arrow::array::{Array, ArrayRef, BooleanArray, Float32Array, Float32Builder, 
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+
+const CHUNK_SIZE: usize = 1024;
+const TREE_BATCH_SIZE: usize = 16;
 
 type VecTreeWithTreeNode = VecTree<TreeNode>;
 
@@ -327,7 +331,6 @@ impl FeatureTree {
         if feature_types.is_empty() {
             return Err(FeatureTreeError::MissingFeatureTypes);
         }
-
         if nodes.is_empty() {
             return Err(FeatureTreeError::InvalidStructure("Empty tree".to_string()));
         }
@@ -549,39 +552,64 @@ impl Default for GradientBoostedDecisionTrees {
 }
 
 impl GradientBoostedDecisionTrees {
-    pub fn predict_batch(&self, batch: &RecordBatch) -> Result<Float32Array, ArrowError> {
-        self.predict_arrays(batch.columns())
-    }
-
-    fn extract_row_block(
-        feature_values: &[Vec<f32>],
-        range: std::ops::Range<usize>,
-    ) -> Vec<Vec<f32>> {
-        let num_features = feature_values.len();
-        let block_size = range.end - range.start;
-        let mut block = Vec::with_capacity(block_size);
-
-        for row_idx in range {
-            let mut row_features = Vec::with_capacity(num_features);
-            for col in feature_values {
-                row_features.push(col[row_idx]);
-            }
-            block.push(row_features);
+    pub fn predict_batches(&self, batches: &[RecordBatch]) -> Result<Float32Array, ArrowError> {
+        if batches.len() == 1 {
+            return self.predict_arrays(batches[0].columns());
         }
-        block
+
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let mut builder = Float32Builder::with_capacity(total_rows);
+
+        for batch in batches {
+            let predictions = self.predict_arrays(batch.columns())?;
+            let values: &[f32] = predictions.values();
+            builder.append_slice(values);
+        }
+
+        Ok(builder.finish())
     }
-    #[allow(clippy::assign_op_pattern)]
+
     #[inline]
     pub fn predict_arrays(&self, feature_arrays: &[ArrayRef]) -> Result<Float32Array, ArrowError> {
-        const ROW_BLOCK_SIZE: usize = 256;
-        let num_rows = feature_arrays[0].len();
-        let num_features = feature_arrays.len();
-        let mut builder = Float32Builder::with_capacity(num_rows);
-        let mut feature_values = Vec::with_capacity(num_features);
+        let features = self.extract_features(feature_arrays)?;
+        self.predict_internal(&features)
+    }
 
-        // Existing feature value extraction code...
+    #[inline]
+    fn predict_internal(&self, features: &[Vec<f32>]) -> Result<Float32Array, ArrowError> {
+        let (num_rows, num_features) = (features[0].len(), features.len());
+
+        let predictions: Vec<f32> = (0..num_rows)
+            .into_par_iter()
+            .fold(Vec::new, |mut partial_results, row_idx| {
+                let mut row_features = vec![0.0; num_features];
+
+                for (j, col) in features.iter().enumerate() {
+                    row_features[j] = col[row_idx];
+                }
+
+                let mut score = self.base_score;
+                for tree in &self.trees {
+                    score += tree.predict(&row_features);
+                }
+                partial_results.push(self.objective.compute_score(score));
+                partial_results
+            })
+            .reduce(Vec::new, |mut a, mut b| {
+                a.append(&mut b);
+                a
+            });
+
+        let mut builder = Float32Builder::with_capacity(predictions.len());
+        builder.append_slice(&predictions);
+        Ok(builder.finish())
+    }
+    #[inline]
+    fn extract_features(&self, feature_arrays: &[ArrayRef]) -> Result<Vec<Vec<f32>>, ArrowError> {
+        let num_rows = feature_arrays[0].len();
+        let mut feature_values = Vec::with_capacity(feature_arrays.len());
+
         for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
-            // ... keeping all the existing match arms ...
             let values = match (array.data_type(), feature_type) {
                 (DataType::Float32, FeatureType::Float) => {
                     let array = array
@@ -591,40 +619,48 @@ impl GradientBoostedDecisionTrees {
                             ArrowError::InvalidArgumentError("Expected Float32Array".into())
                         })?;
 
-                    let mut values = Vec::with_capacity(num_rows);
-                    if let Some(null_bitmap) = array.nulls() {
-                        let values_slice = array.values();
-                        for i in 0..num_rows {
-                            values.push(if null_bitmap.is_null(i) {
-                                f32::NAN
-                            } else {
-                                values_slice[i]
-                            });
-                        }
+                    if array.nulls().is_none() {
+                        array.values().to_vec()
                     } else {
-                        values.extend_from_slice(array.values());
+                        let values_slice = array.values();
+                        let null_bitmap = array.nulls().unwrap();
+
+                        values_slice
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &val)| {
+                                if null_bitmap.is_null(i) {
+                                    f32::NAN
+                                } else {
+                                    val
+                                }
+                            })
+                            .collect()
                     }
-                    values
                 }
                 (DataType::Int64, FeatureType::Int) => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
 
-                    let mut values = Vec::with_capacity(num_rows);
-                    if let Some(null_bitmap) = array.nulls() {
-                        let values_slice = array.values();
-                        for i in 0..num_rows {
-                            values.push(if null_bitmap.is_null(i) {
-                                f32::NAN
-                            } else {
-                                values_slice[i] as f32
-                            });
-                        }
+                    if array.nulls().is_none() {
+                        array.values().iter().map(|&x| x as f32).collect()
                     } else {
-                        values.extend(array.values().iter().map(|&x| x as f32));
+                        let values_slice = array.values();
+                        let null_bitmap = array.nulls().unwrap();
+
+                        values_slice
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &val)| {
+                                if null_bitmap.is_null(i) {
+                                    f32::NAN
+                                } else {
+                                    val as f32
+                                }
+                            })
+                            .collect()
                     }
-                    values
                 }
                 (DataType::Boolean, FeatureType::Indicator) => {
                     let array = array
@@ -634,28 +670,34 @@ impl GradientBoostedDecisionTrees {
                             ArrowError::InvalidArgumentError("Expected BooleanArray".into())
                         })?;
 
-                    let mut values = Vec::with_capacity(num_rows);
-                    if let Some(null_bitmap) = array.nulls() {
-                        for i in 0..num_rows {
-                            values.push(if null_bitmap.is_null(i) {
-                                f32::NAN
-                            } else if array.value(i) {
-                                1.0
-                            } else {
-                                0.0
-                            });
-                        }
+                    if array.nulls().is_none() {
+                        array
+                            .values()
+                            .iter()
+                            .map(|x| if x { 1.0 } else { 0.0 })
+                            .collect()
                     } else {
-                        values.extend(array.values().iter().map(|x| if x { 1.0 } else { 0.0 }));
+                        let null_bitmap = array.nulls().unwrap();
+
+                        (0..num_rows)
+                            .map(|i| {
+                                if null_bitmap.is_null(i) {
+                                    f32::NAN
+                                } else if array.value(i) {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            })
+                            .collect()
                     }
-                    values
                 }
-                (actual, expected) => {
+                (actual_type, expected_type) => {
                     return Err(ArrowError::InvalidArgumentError(format!(
                         "Feature: expected {:?} for type {}, got {:?}",
-                        expected.get_arrow_data_type(),
-                        expected,
-                        actual
+                        expected_type.get_arrow_data_type(),
+                        expected_type,
+                        actual_type
                     )));
                 }
             };
@@ -663,49 +705,7 @@ impl GradientBoostedDecisionTrees {
             feature_values.push(values);
         }
 
-        let num_trees = self.trees.len();
-        if num_trees > 50 {
-            const TREE_BATCH_SIZE: usize = 128;
-            let mut scores = vec![self.base_score; num_rows];
-
-            // Process trees in cache-friendly batches
-            for tree_batch in self.trees.chunks(TREE_BATCH_SIZE) {
-                // Process rows in blocks to improve cache locality
-                for start_row in (0..num_rows).step_by(ROW_BLOCK_SIZE) {
-                    let end_row = (start_row + ROW_BLOCK_SIZE).min(num_rows);
-
-                    // Extract block of rows once
-                    let row_block = Self::extract_row_block(&feature_values, start_row..end_row);
-                    for tree in tree_batch {
-                        for (row_idx, row_features) in row_block.iter().enumerate() {
-                            let index = start_row + row_idx;
-                            scores[index] = scores[index] + tree.predict(row_features);
-                        }
-                    }
-                }
-            }
-
-            // Apply objective function after all scores are accumulated
-            for score in scores {
-                builder.append_value(self.objective.compute_score(score));
-            }
-        } else {
-            let mut row_features = vec![0.0; num_features];
-            // Original approach for small number of trees
-            for row in 0..num_rows {
-                for (i, values) in feature_values.iter().enumerate() {
-                    row_features[i] = values[row];
-                }
-
-                let mut score = self.base_score;
-                for tree in &self.trees {
-                    score += tree.predict(&row_features);
-                }
-                builder.append_value(self.objective.compute_score(score));
-            }
-        }
-
-        Ok(builder.finish())
+        Ok(feature_values)
     }
 
     pub fn num_trees(&self) -> usize {
@@ -999,7 +999,7 @@ mod tests {
         };
 
         let batch = create_sample_record_batch();
-        let predictions = gbdt.predict_batch(&batch).unwrap();
+        let predictions = gbdt.predict_batches(&[batch]).unwrap();
 
         assert_eq!(predictions.len(), 4);
 

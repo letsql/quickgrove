@@ -106,30 +106,30 @@
         poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
           projectDir = ./.;
           preferWheels = true;
-          nativeBuildInputs = [ pkgs.maturin rustToolchain cargoDeps pkgs.pkg-config ];
-          # we need to add the following buildInputs to ensure that the build environment works with maturin
-          buildInputs = with pkgs; [
-            openssl
-            cacert
+          python = pkgs.python312;
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = customFilter;
+          };
+          cargoDeps = pkgs.rustPlatform.importCargoLock {
+            lockFile = ./Cargo.lock;
+            outputHashes = {
+              "gbdt-0.1.3" = "sha256-f2uqulFSNGwrDM7RPdGIW11VpJRYexektXjHxTJHHmA=";
+            };
+          };
+          nativeBuildInputs = [
+            pkgs.rustPlatform.cargoSetupHook
+            pkgs.rustPlatform.maturinBuildHook
+            rustToolchain
+            pkgs.pkg-config
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
-            pkgs.darwin.apple_sdk.frameworks.Security
           ];
-
-          preBuild = ''
-            export CARGO_HOME="$PWD/.cargo"
-            export RUSTUP_HOME="$PWD/.rustup"
-            mkdir -p $CARGO_HOME
-            
-          '';
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+          ];
           overrides = pkgs.poetry2nix.overrides.withDefaults
             (self: super: {
-              atpublic = super.atpublic.overridePythonAttrs
-                (
-                  old: {
-                    buildInputs = (old.buildInputs or [ ]) ++ [ super.hatchling ];
-                  }
-                );
               xgboost = super.xgboost.overridePythonAttrs (old: { } // pkgs.lib.attrsets.optionalAttrs pkgs.stdenv.isDarwin {
                 nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ super.cmake ];
                 cmakeDir = "../cpp_src";
@@ -139,6 +139,7 @@
               });
             });
         };
+
         buildMaturinScript = pkgs.writeScriptBin "build-maturin" ''
           #!${pkgs.stdenv.shell}
           echo "Building maturin wheel..."
@@ -216,11 +217,19 @@
         };
       in
       {
+        apps = rec {
+          poetryApp = {
+            type = "app";
+            program = "${poetryApplication.dependencyEnv}/bin/ipython";
+          };
+          default = poetryApp;
+        };
         packages = {
           trusty = trusty;
           pyApp = poetryApplication;
           data = dataFiles;
           datafusion-udf-example = datafusion-udf-wrapper;
+          inherit poetryApplication;
           default = datafusion-udf-wrapper;
         };
 
@@ -286,6 +295,12 @@
             ${pre-commit-check.shellHook}
             echo "Run 'build-maturin' to rebuild and install the package"
           '';
+        };
+        devShells.danShell = pkgs.mkShell {
+          buildInputs = [
+            poetryApplication
+            rustToolchain
+          ];
         };
       });
 }
