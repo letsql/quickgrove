@@ -1,4 +1,4 @@
-use arrow::array::{ArrayRef, Float64Array};
+use arrow::array::{ArrayRef, Float32Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::prelude::*;
@@ -30,7 +30,8 @@ const MODEL_JSON: &str = r#"{
                         "left_children": [1, 4294967295, 4294967295],
                         "right_children": [2, 4294967295, 4294967295],
                         "base_weights": [0.0, -1.0, 1.0],
-                        "default_left": [0, 0, 0]
+                        "default_left": [0, 0, 0],
+                        "sum_hessian": [0, 0, 0]
                     }
                 ]
             }
@@ -53,7 +54,7 @@ impl TrustyUDF {
         let mut arg_types = Vec::new();
         for feature_types in model.feature_types.iter() {
             match feature_types {
-                FeatureType::Float => arg_types.push(DataType::Float64),
+                FeatureType::Float => arg_types.push(DataType::Float32),
                 FeatureType::Int => arg_types.push(DataType::Int64),
                 FeatureType::Indicator => arg_types.push(DataType::Boolean),
             }
@@ -61,7 +62,7 @@ impl TrustyUDF {
         Ok(Self {
             signature: Signature::exact(arg_types, Volatility::Immutable),
             trees: model,
-            return_type: DataType::Float64,
+            return_type: DataType::Float32,
         })
     }
 }
@@ -107,12 +108,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ctx = SessionContext::new();
 
     let schema = Arc::new(Schema::new(vec![
-        Field::new("feature0", DataType::Float64, false),
-        Field::new("feature1", DataType::Float64, false),
+        Field::new("feature0", DataType::Float32, false),
+        Field::new("feature1", DataType::Float32, false),
     ]));
 
-    let feature0 = Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0]));
-    let feature1 = Arc::new(Float64Array::from(vec![0.5, 1.5, 2.5, 3.5]));
+    let feature0 = Arc::new(Float32Array::from(vec![1.0, 2.0, 3.0, 4.0]));
+    let feature1 = Arc::new(Float32Array::from(vec![0.5, 1.5, 2.5, 3.5]));
     let batch = RecordBatch::try_new(schema.clone(), vec![feature0, feature1])?;
 
     ctx.register_batch("test_table", batch)?;
