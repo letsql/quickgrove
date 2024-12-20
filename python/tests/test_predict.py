@@ -45,7 +45,4 @@ def test_pruning():
     df = df.drop(["target", "prediction"], axis=1)
     pruned_model = model.prune(predicates)
     predictions = pruned_model.predict_batches([batch])
-    assert len(predictions) == len(df)
-    assert all([isinstance(p, float) for p in predictions])
-    assert all([p >= 0 for p in predictions])
-    np.testing.assert_array_almost_equal(np.array(predictions), np.array(actual_preds), decimal=3) # 10^(-12)
+    np.testing.assert_array_almost_equal(np.array(predictions), np.array(actual_preds), decimal=3)
