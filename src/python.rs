@@ -9,6 +9,7 @@ use arrow::pyarrow::PyArrowType;
 use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyo3_arrow::{error::PyArrowResult, PyArray};
 use std::sync::Arc;
 
 #[pyclass]
@@ -51,13 +52,16 @@ impl PyGradientBoostedDecisionTrees {
         Ok(PyGradientBoostedDecisionTrees { model })
     }
 
-    fn predict_batches(&self, py_record_batches: &Bound<'_, PyList>) -> PyResult<Vec<f32>> {
+    fn predict_batches(
+        &self,
+        py: Python,
+        py_record_batches: &Bound<'_, PyList>,
+    ) -> PyArrowResult<PyArray> {
         let mut batches = Vec::with_capacity(py_record_batches.len());
 
         for py_batch in py_record_batches.iter() {
             let py_arrow_type = py_batch.extract::<PyArrowType<RecordBatch>>()?;
             let record_batch = py_arrow_type.0;
-
             let arrays: Vec<ArrayRef> = record_batch
                 .columns()
                 .iter()
@@ -69,7 +73,6 @@ impl PyGradientBoostedDecisionTrees {
                     }
                 })
                 .collect();
-
             let new_schema = Schema::new(
                 record_batch
                     .schema()
@@ -88,18 +91,18 @@ impl PyGradientBoostedDecisionTrees {
                     })
                     .collect::<Vec<Arc<Field>>>(),
             );
-
             let float32_batch = RecordBatch::try_new(Arc::new(new_schema), arrays).unwrap();
             batches.push(float32_batch);
         }
 
-        // Process all batches at once
-        let result = self
-            .model
-            .predict_batches(&batches)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let predictions_array = py.allow_threads(|| {
+            self.model
+                .predict_batches(&batches)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        })?;
 
-        Ok(result.values().to_vec())
+        let field = Field::new("predictions", DataType::Float32, false);
+        Ok(PyArray::new(Arc::new(predictions_array), Arc::new(field)))
     }
 
     fn prune(&self, predicates: &Bound<'_, PyList>) -> PyResult<Self> {
