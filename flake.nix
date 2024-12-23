@@ -182,7 +182,8 @@
           mkdir -p data
           echo "Copying data files from Nix store..."
           cp -f ${dataFiles}/data/* data/
-          ${poetryApplication}/bin/generate-examples --data_dir data --base_dir data --generation_type benchmark
+          ${pythonEnv}/bin/python ${./.}/app/generate_examples.py --data_dir data --base_dir data --generation_type benchmark
+
         '';
         pythonEnv = poetryApplication.dependencyEnv;
         clippy-hook = pkgs.writeScript "clippy-hook" ''
