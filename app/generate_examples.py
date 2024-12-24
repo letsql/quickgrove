@@ -61,9 +61,9 @@ class TreeConfig:
         if generation_type == GenerationType.TEST:
             return [cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"])]
         return [
-            cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"]),
-            cls(num_trees=500, allowed_datasets=["airline_satisfaction"]),
-            cls(num_trees=1000, allowed_datasets=["airline_satisfaction"])
+            cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction", "synthetic_floats"]),
+            cls(num_trees=500, allowed_datasets=["airline_satisfaction", "synthetic_floats"]),
+            cls(num_trees=1000, allowed_datasets=["airline_satisfaction", "synthetic_floats"])
         ]
 
 @attrs.define(frozen=True)
@@ -199,18 +199,11 @@ class DiamondsProcessor(DataProcessor):
         if not self.config.data_path.exists():
             raise FileNotFoundError(f"Data file not found: {self.config.data_path}")
         df = pd.read_csv(self.config.data_path)
-        # Introduce 20% missing values in carat column
         missing_mask = np.random.choice([True, False], size=len(df), p=[0.2, 0.8])
         df.loc[missing_mask, 'depth'] = np.nan
         return df
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
-        # if self.config.filter_predicate:
-        #     df = df.query(self.config.filter_predicate)
-
-        # if self.config.sample_size:
-        #     df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
-
         df_encoded = pd.get_dummies(
             df,
             columns=["cut", "color", "clarity"],
@@ -292,6 +285,31 @@ class AirlineProcessor(DataProcessor):
             X = self.enforce_float64(X)
             y = y.astype('float64')
 
+        return X, y
+
+class AllFloatsProcessor(DataProcessor):
+    def __init__(self, config: DataConfig):
+        super().__init__(config)
+        self.column_order = [
+            "feature1", "feature2", "feature3", "feature4", "feature5",
+            "feature6", "feature7", "feature8", "feature9", "feature10"
+        ]
+    
+    def load_data(self) -> pd.DataFrame:
+        n_samples = 10000
+        df = pd.DataFrame(
+            np.random.randn(n_samples, 10),  # Generate random floats
+            columns=self.column_order
+        )
+        df["target"] = np.random.randn(n_samples)
+        return df
+
+    def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df
+
+    def get_feature_target_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+        X = df[self.column_order]
+        y = df["target"]
         return X, y
 
 class ModelTrainer:
@@ -394,7 +412,8 @@ def main():
     args = arg_parse()
     processors: Dict[str, Type[DataProcessor]] = {
         "diamonds": DiamondsProcessor,
-        "airline_satisfaction": AirlineProcessor
+        "airline_satisfaction": AirlineProcessor,
+        "synthetic_floats": AllFloatsProcessor
     }
 
     generation_type = args.generation_type
