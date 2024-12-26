@@ -143,7 +143,7 @@
         buildMaturinScript = pkgs.writeScriptBin "build-maturin" ''
           #!${pkgs.stdenv.shell}
           echo "Building maturin wheel..."
-          maturin build
+          maturin build --release
             
           WHEEL_PATH="target/wheels"
           WHEEL_FILE=$(ls ''${WHEEL_PATH}/*.whl | head -n 1)
