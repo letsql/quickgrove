@@ -1,4 +1,5 @@
 use super::vec_tree::{Traversable, TreeNode, VecTree};
+use crate::arch::CpuFeatures;
 use crate::loader::{ModelError, ModelLoader, XGBoostParser};
 use crate::objective::Objective;
 use crate::predicates::{Condition, Predicate};
@@ -14,6 +15,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 type VecTreeWithTreeNode = VecTree<TreeNode>;
 
@@ -111,17 +113,26 @@ impl FeatureTree {
             feature_types,
         }
     }
+
+    #[inline(always)]
     pub fn predict(&self, features: &[f32]) -> f32 {
+        static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
+        let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
+
         let mut current = match self.tree.get_node(self.tree.get_root_index()) {
             Some(node) => node,
             None => return 0.0,
         };
 
-        loop {
-            if current.is_leaf() {
-                return current.weight();
-            }
+        // Prefetch first level
+        if let Some(node) = self.tree.nodes.get(current.left()) {
+            cpu_features.prefetch(node as *const _);
+        }
+        if let Some(node) = self.tree.nodes.get(current.right()) {
+            cpu_features.prefetch(node as *const _);
+        }
 
+        while !current.is_leaf() {
             let feature_idx = self.feature_offset + current.feature_index() as usize;
             let split_value = features[feature_idx];
 
@@ -133,16 +144,37 @@ impl FeatureTree {
 
             current = if go_right {
                 match self.tree.get_right_child(current) {
-                    Some(node) => node,
-                    None => return current.weight(),
+                    Some(node) => {
+                        if !node.is_leaf() {
+                            if let Some(next) = self.tree.nodes.get(node.left()) {
+                                cpu_features.prefetch(next as *const _);
+                            }
+                            if let Some(next) = self.tree.nodes.get(node.right()) {
+                                cpu_features.prefetch(next as *const _);
+                            }
+                        }
+                        node
+                    }
+                    None => break,
                 }
             } else {
                 match self.tree.get_left_child(current) {
-                    Some(node) => node,
-                    None => return current.weight(),
+                    Some(node) => {
+                        if !node.is_leaf() {
+                            if let Some(next) = self.tree.nodes.get(node.left()) {
+                                cpu_features.prefetch(next as *const _);
+                            }
+                            if let Some(next) = self.tree.nodes.get(node.right()) {
+                                cpu_features.prefetch(next as *const _);
+                            }
+                        }
+                        node
+                    }
+                    None => break,
                 }
             };
         }
+        current.weight()
     }
 
     pub fn depth(&self) -> usize {
@@ -574,24 +606,65 @@ impl GradientBoostedDecisionTrees {
 
     #[inline]
     fn predict_internal(&self, features: &[Vec<f32>]) -> Result<Float32Array, ArrowError> {
+        static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
+        let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
+
         let (num_rows, num_features) = (features[0].len(), features.len());
+        const TREE_CHUNK_SIZE: usize = 8;
+        const ROW_CHUNK_SIZE: usize = 64;
 
         let predictions: Vec<f32> = (0..num_rows)
             .into_par_iter()
-            .fold(Vec::new, |mut partial_results, row_idx| {
-                let mut row_features = vec![0.0; num_features];
+            .chunks(ROW_CHUNK_SIZE)
+            .fold(
+                || Vec::with_capacity(ROW_CHUNK_SIZE),
+                |mut chunk_results, row_indices| {
+                    let mut row_features = vec![0.0; num_features];
+                    let mut chunk_scores = vec![self.base_score; row_indices.len()];
 
-                for (j, col) in features.iter().enumerate() {
-                    row_features[j] = col[row_idx];
-                }
+                    for tree_chunk in self.trees.chunks(TREE_CHUNK_SIZE) {
+                        if let Some(first_tree) = tree_chunk.first() {
+                            if let Some(root) = first_tree.tree.get_node(0) {
+                                cpu_features.prefetch(root as *const _);
+                            }
+                        }
 
-                let mut score = self.base_score;
-                for tree in &self.trees {
-                    score += tree.predict(&row_features);
-                }
-                partial_results.push(self.objective.compute_score(score));
-                partial_results
-            })
+                        for (chunk_idx, &row_idx) in row_indices.iter().enumerate() {
+                            // Unroll by 8 for better vectorization
+                            let mut j = 0;
+                            while j + 8 <= num_features {
+                                row_features[j] = features[j][row_idx];
+                                row_features[j + 1] = features[j + 1][row_idx];
+                                row_features[j + 2] = features[j + 2][row_idx];
+                                row_features[j + 3] = features[j + 3][row_idx];
+                                row_features[j + 4] = features[j + 4][row_idx];
+                                row_features[j + 5] = features[j + 5][row_idx];
+                                row_features[j + 6] = features[j + 6][row_idx];
+                                row_features[j + 7] = features[j + 7][row_idx];
+                                j += 8;
+                            }
+                            while j < num_features {
+                                row_features[j] = features[j][row_idx];
+                                j += 1;
+                            }
+
+                            let tree_chunk_score: f32 = tree_chunk
+                                .iter()
+                                .map(|tree| tree.predict(&row_features))
+                                .sum();
+                            chunk_scores[chunk_idx] += tree_chunk_score;
+                        }
+                    }
+
+                    chunk_results.extend(
+                        chunk_scores
+                            .into_iter()
+                            .map(|score| self.objective.compute_score(score)),
+                    );
+
+                    chunk_results
+                },
+            )
             .reduce(Vec::new, |mut a, mut b| {
                 a.append(&mut b);
                 a
@@ -601,6 +674,7 @@ impl GradientBoostedDecisionTrees {
         builder.append_slice(&predictions);
         Ok(builder.finish())
     }
+
     #[inline]
     fn extract_features(&self, feature_arrays: &[ArrayRef]) -> Result<Vec<Vec<f32>>, ArrowError> {
         let num_rows = feature_arrays[0].len();

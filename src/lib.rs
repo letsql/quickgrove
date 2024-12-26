@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+pub mod arch;
 pub mod loader;
 pub mod objective;
 pub mod predicates;
