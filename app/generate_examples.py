@@ -12,25 +12,29 @@ from enum import Enum
 
 pd.options.mode.copy_on_write = True
 
+
 class DataVariant(str, Enum):
     FULL = "full"
     FILTERED = "filtered"
 
+
 class GenerationType(str, Enum):
     BENCHMARK = "benchmark"
     TEST = "test"
+
 
 class ObjectiveType(str, Enum):
     SQUARED_ERROR = "reg:squarederror"
     LOGISTIC = "reg:logistic"
     BINARY_LOGISTIC = "binary:logistic"
 
+
 @attrs.define(frozen=True)
 class DataConfig:
     name: Literal["diamonds", "airline_satisfaction"]
     generation_type: GenerationType
     variant: DataVariant
-    data_dir: Path 
+    data_dir: Path
     force_float64: bool = False
 
     @property
@@ -42,7 +46,7 @@ class DataConfig:
         if self.variant == DataVariant.FILTERED:
             predicates = {
                 "diamonds": "carat < 0.3",
-                "airline_satisfaction": "online_boarding >= 4.0"
+                "airline_satisfaction": "online_boarding >= 4.0",
             }
             return predicates.get(self.name)
         return None
@@ -50,6 +54,7 @@ class DataConfig:
     @property
     def data_path(self) -> Path:
         return self.data_dir / f"{self.name}.csv"
+
 
 @attrs.define(frozen=True)
 class TreeConfig:
@@ -59,12 +64,30 @@ class TreeConfig:
     @classmethod
     def get_configs(cls, generation_type: GenerationType) -> List["TreeConfig"]:
         if generation_type == GenerationType.TEST:
-            return [cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"])]
+            return [
+                cls(
+                    num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction"]
+                )
+            ]
         return [
-            cls(num_trees=100, allowed_datasets=["diamonds", "airline_satisfaction", "synthetic_floats"]),
-            cls(num_trees=500, allowed_datasets=["airline_satisfaction", "synthetic_floats"]),
-            cls(num_trees=1000, allowed_datasets=["airline_satisfaction", "synthetic_floats"])
+            cls(
+                num_trees=100,
+                allowed_datasets=[
+                    "diamonds",
+                    "airline_satisfaction",
+                    "synthetic_floats",
+                ],
+            ),
+            cls(
+                num_trees=500,
+                allowed_datasets=["airline_satisfaction", "synthetic_floats"],
+            ),
+            cls(
+                num_trees=1000,
+                allowed_datasets=["airline_satisfaction", "synthetic_floats"],
+            ),
         ]
+
 
 @attrs.define(frozen=True)
 class ObjectiveConfig:
@@ -94,11 +117,12 @@ class ObjectiveConfig:
             "max_depth": self.max_depth,
             "eta": self.learning_rate,
             "num_parallel_tree": self.num_parallel_trees,
-            "eval_metric": "rmse" if self.name.value.startswith("reg:") else "logloss"
+            "eval_metric": "rmse" if self.name.value.startswith("reg:") else "logloss",
         }
         if base_score is not None:
             params["base_score"] = base_score
         return params
+
 
 @attrs.define
 class ModelMetadata:
@@ -109,6 +133,7 @@ class ModelMetadata:
     feature_names: List[str]
     data_shape: Tuple[int, int]
     num_trees: int
+
 
 @attrs.define
 class OutputPaths:
@@ -135,26 +160,39 @@ class OutputPaths:
 
     @property
     def data_path(self) -> Path:
-        return (self.output_base_dir / self.objective_name / "data" /
-                f"{self.dataset_name}_data_{self.data_suffix}.csv")
+        return (
+            self.output_base_dir
+            / self.objective_name
+            / "data"
+            / f"{self.dataset_name}_data_{self.data_suffix}.csv"
+        )
 
     @property
     def model_path(self) -> Path:
         if self.num_trees is None:
             raise ValueError("num_trees must be set for model path")
-        return (self.output_base_dir / self.objective_name / "models" /
-                f"{self.dataset_name}_model_{self.model_suffix}.json")
+        return (
+            self.output_base_dir
+            / self.objective_name
+            / "models"
+            / f"{self.dataset_name}_model_{self.model_suffix}.json"
+        )
 
     @property
     def metadata_path(self) -> Path:
         if self.num_trees is None:
             raise ValueError("num_trees must be set for metadata path")
-        return (self.output_base_dir /  self.objective_name / "models" /
-                f"{self.dataset_name}_metadata_{self.model_suffix}.json")
+        return (
+            self.output_base_dir
+            / self.objective_name
+            / "models"
+            / f"{self.dataset_name}_metadata_{self.model_suffix}.json"
+        )
 
     def ensure_directories(self) -> None:
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
+
 
 class DataProcessor(ABC):
     def __init__(self, config: DataConfig):
@@ -171,28 +209,49 @@ class DataProcessor(ABC):
         pass
 
     @abstractmethod
-    def get_feature_target_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    def get_feature_target_split(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         """Split data into features and target."""
         pass
 
     def enforce_float64(self, df: pd.DataFrame) -> pd.DataFrame:
         df_copy = df.copy()
         numeric_cols = df_copy.select_dtypes(
-            include=['int32', 'int64', 'bool', 'float32', 'float64']
+            include=["int32", "int64", "bool", "float32", "float64"]
         ).columns
         for col in numeric_cols:
-            df_copy[col] = df_copy[col].astype('float64')
+            df_copy[col] = df_copy[col].astype("float64")
         return df_copy
+
 
 class DiamondsProcessor(DataProcessor):
     def __init__(self, config: DataConfig):
         super().__init__(config)
         self.column_order = [
-            "carat", "depth", "table", "x", "y", "z",
-            "cut_good", "cut_ideal", "cut_premium", "cut_very_good",
-            "color_e", "color_f", "color_g", "color_h", "color_i", "color_j",
-            "clarity_if", "clarity_si1", "clarity_si2", "clarity_vs1",
-            "clarity_vs2", "clarity_vvs1", "clarity_vvs2"
+            "carat",
+            "depth",
+            "table",
+            "x",
+            "y",
+            "z",
+            "cut_good",
+            "cut_ideal",
+            "cut_premium",
+            "cut_very_good",
+            "color_e",
+            "color_f",
+            "color_g",
+            "color_h",
+            "color_i",
+            "color_j",
+            "clarity_if",
+            "clarity_si1",
+            "clarity_si2",
+            "clarity_vs1",
+            "clarity_vs2",
+            "clarity_vvs1",
+            "clarity_vvs2",
         ]
 
     def load_data(self) -> pd.DataFrame:
@@ -200,52 +259,69 @@ class DiamondsProcessor(DataProcessor):
             raise FileNotFoundError(f"Data file not found: {self.config.data_path}")
         df = pd.read_csv(self.config.data_path)
         missing_mask = np.random.choice([True, False], size=len(df), p=[0.2, 0.8])
-        df.loc[missing_mask, 'depth'] = np.nan
+        df.loc[missing_mask, "depth"] = np.nan
         return df
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         df_encoded = pd.get_dummies(
             df,
             columns=["cut", "color", "clarity"],
-            prefix={"cut": "cut", "color": "color", "clarity": "clarity"}
+            prefix={"cut": "cut", "color": "color", "clarity": "clarity"},
         )
         df_encoded.columns = df_encoded.columns.str.replace(" ", "_").str.lower()
 
         for col in self.column_order:
             if col not in df_encoded.columns:
                 df_encoded[col] = False
-            
+
             if col.startswith(("cut_", "color_", "clarity_")):
                 df_encoded[col] = df_encoded[col].astype(bool)
 
         numeric_cols = ["carat", "depth", "table", "x", "y", "z"]
         for col in numeric_cols:
-            df_encoded[col] = df_encoded[col].astype('float64')
+            df_encoded[col] = df_encoded[col].astype("float64")
 
         return df_encoded[self.column_order + ["price"]]
 
-    def get_feature_target_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    def get_feature_target_split(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         X = df[self.column_order]
         y = df["price"]
 
         if self.config.force_float64:
             X = self.enforce_float64(X)
-            y = y.astype('float64')
+            y = y.astype("float64")
 
         return X, y
+
 
 class AirlineProcessor(DataProcessor):
     def __init__(self, config: DataConfig):
         super().__init__(config)
         self.column_order = [
-            "gender", "customer_type", "age", "type_of_travel", "class",
-            "flight_distance", "inflight_wifi_service",
-            "departure/arrival_time_convenient", "ease_of_online_booking",
-            "gate_location", "food_and_drink", "online_boarding",
-            "seat_comfort", "inflight_entertainment", "on_board_service",
-            "leg_room_service", "baggage_handling", "checkin_service",
-            "inflight_service", "cleanliness", "departure_delay_in_minutes",
-            "arrival_delay_in_minutes"
+            "gender",
+            "customer_type",
+            "age",
+            "type_of_travel",
+            "class",
+            "flight_distance",
+            "inflight_wifi_service",
+            "departure/arrival_time_convenient",
+            "ease_of_online_booking",
+            "gate_location",
+            "food_and_drink",
+            "online_boarding",
+            "seat_comfort",
+            "inflight_entertainment",
+            "on_board_service",
+            "leg_room_service",
+            "baggage_handling",
+            "checkin_service",
+            "inflight_service",
+            "cleanliness",
+            "departure_delay_in_minutes",
+            "arrival_delay_in_minutes",
         ]
 
     def load_data(self) -> pd.DataFrame:
@@ -265,8 +341,11 @@ class AirlineProcessor(DataProcessor):
             df = df.sample(n=min(self.config.sample_size, len(df)), random_state=42)
 
         categorical_columns = [
-            "gender", "customer_type", "type_of_travel",
-            "class", "satisfaction"
+            "gender",
+            "customer_type",
+            "type_of_travel",
+            "class",
+            "satisfaction",
         ]
 
         le = LabelEncoder()
@@ -277,29 +356,40 @@ class AirlineProcessor(DataProcessor):
 
         return df
 
-    def get_feature_target_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    def get_feature_target_split(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         X = df[self.column_order]
         y = df["satisfaction"]
 
         if self.config.force_float64:
             X = self.enforce_float64(X)
-            y = y.astype('float64')
+            y = y.astype("float64")
 
         return X, y
+
 
 class AllFloatsProcessor(DataProcessor):
     def __init__(self, config: DataConfig):
         super().__init__(config)
         self.column_order = [
-            "feature1", "feature2", "feature3", "feature4", "feature5",
-            "feature6", "feature7", "feature8", "feature9", "feature10"
+            "feature1",
+            "feature2",
+            "feature3",
+            "feature4",
+            "feature5",
+            "feature6",
+            "feature7",
+            "feature8",
+            "feature9",
+            "feature10",
         ]
-    
+
     def load_data(self) -> pd.DataFrame:
         n_samples = 10000
         df = pd.DataFrame(
             np.random.randn(n_samples, 10),  # Generate random floats
-            columns=self.column_order
+            columns=self.column_order,
         )
         df["target"] = np.random.randn(n_samples)
         return df
@@ -307,17 +397,20 @@ class AllFloatsProcessor(DataProcessor):
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
         return df
 
-    def get_feature_target_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    def get_feature_target_split(
+        self, df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         X = df[self.column_order]
         y = df["target"]
         return X, y
+
 
 class ModelTrainer:
     def __init__(
         self,
         data_processor: DataProcessor,
         objective_config: ObjectiveConfig,
-        base_dir: Path
+        base_dir: Path,
     ):
         self.data_processor = data_processor
         self.objective_config = objective_config
@@ -331,18 +424,19 @@ class ModelTrainer:
             objective_name=self.objective_config.name.value,
             force_float64=data_config.force_float64,
             generation_type=data_config.generation_type,
-            num_trees=self.objective_config.num_trees
+            num_trees=self.objective_config.num_trees,
         )
 
     def prepare_data_for_objective(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series
+        self, X: pd.DataFrame, y: pd.Series
     ) -> Tuple[pd.DataFrame, pd.Series]:
         X_prep = X.copy()
         y_prep = y.copy()
 
-        if self.objective_config.name in [ObjectiveType.LOGISTIC, ObjectiveType.BINARY_LOGISTIC]:
+        if self.objective_config.name in [
+            ObjectiveType.LOGISTIC,
+            ObjectiveType.BINARY_LOGISTIC,
+        ]:
             y_prep = (y_prep - y_prep.min()) / (y_prep.max() - y_prep.min())
 
         return X_prep, y_prep
@@ -354,32 +448,37 @@ class ModelTrainer:
         df = self.data_processor.load_data()
         df_full = self.data_processor.preprocess(df.copy())
         X_full, y_full = self.data_processor.get_feature_target_split(df_full)
-        
+
         X_prep_full, y_prep_full = self.prepare_data_for_objective(X_full, y_full)
         dtrain_full = xgb.DMatrix(X_prep_full, label=y_prep_full)
-        
-        base_score = float(y_prep_full.mean()) if self.objective_config.name in [
-            ObjectiveType.LOGISTIC, ObjectiveType.BINARY_LOGISTIC
-        ] else None
-        
+
+        base_score = (
+            float(y_prep_full.mean())
+            if self.objective_config.name
+            in [ObjectiveType.LOGISTIC, ObjectiveType.BINARY_LOGISTIC]
+            else None
+        )
+
         params = self.objective_config.to_xgb_params(base_score)
         model = xgb.train(params, dtrain_full, self.objective_config.num_boost_rounds)
 
         df_preprocessed = self.data_processor.preprocess(df)
         X, y = self.data_processor.get_feature_target_split(df_preprocessed)
         X_prep, y_prep = self.prepare_data_for_objective(X, y)
-        
+
         dtrain = xgb.DMatrix(X_prep)
         predictions = model.predict(dtrain)
 
         output_data = X_prep.copy()
-        output_data['target'] = y_prep.astype('int64')
-        output_data['prediction'] = predictions.astype('float64')
+        output_data["target"] = y_prep.astype("int64")
+        output_data["prediction"] = predictions.astype("float64")
         if data_config.filter_predicate:
             output_data = output_data.query(data_config.filter_predicate)
-        
+
         if data_config.sample_size:
-            output_data = output_data.sample(n=min(data_config.sample_size, len(output_data)), random_state=42)
+            output_data = output_data.sample(
+                n=min(data_config.sample_size, len(output_data)), random_state=42
+            )
 
         output_data.to_csv(paths.data_path, index=False)
 
@@ -387,7 +486,7 @@ class ModelTrainer:
         print(f""" Written files to:
         * {paths.data_path}
         * {paths.model_path}""")
-        
+
         metadata = ModelMetadata(
             dataset_name=data_config.name,
             objective_name=self.objective_config.name.value,
@@ -395,11 +494,12 @@ class ModelTrainer:
             force_float64=data_config.force_float64,
             feature_names=list(X_prep.columns),
             data_shape=X_prep.shape,
-            num_trees=len(model.get_dump())
+            num_trees=len(model.get_dump()),
         )
 
-        with open(paths.metadata_path, 'w') as f:
+        with open(paths.metadata_path, "w") as f:
             json.dump(attrs.asdict(metadata), f, indent=2)
+
 
 def arg_parse() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -408,19 +508,24 @@ def arg_parse() -> argparse.Namespace:
     parser.add_argument("--base_dir", type=str, default=".")
     return parser.parse_args()
 
+
 def main():
     args = arg_parse()
     processors: Dict[str, Type[DataProcessor]] = {
         "diamonds": DiamondsProcessor,
         "airline_satisfaction": AirlineProcessor,
-        "synthetic_floats": AllFloatsProcessor
+        "synthetic_floats": AllFloatsProcessor,
     }
 
     generation_type = args.generation_type
     data_dir = Path(args.data_dir)
     base_dir = Path(args.base_dir)
-    
-    for objective_name in [ObjectiveType.SQUARED_ERROR, ObjectiveType.LOGISTIC, ObjectiveType.BINARY_LOGISTIC]:
+
+    for objective_name in [
+        ObjectiveType.SQUARED_ERROR,
+        ObjectiveType.LOGISTIC,
+        ObjectiveType.BINARY_LOGISTIC,
+    ]:
         for dataset_name, processor_cls in processors.items():
             for force_float64 in [False, True]:
                 for variant in DataVariant:
@@ -434,28 +539,29 @@ def main():
                                 generation_type=generation_type,
                                 variant=variant,
                                 data_dir=data_dir,
-                                force_float64=force_float64
+                                force_float64=force_float64,
                             )
 
                             objective_config = ObjectiveConfig(
                                 name=objective_name,
                                 generation_type=generation_type,
-                                num_trees=tree_config.num_trees
+                                num_trees=tree_config.num_trees,
                             )
 
                             processor = processor_cls(data_config)
                             trainer = ModelTrainer(
-                                processor,
-                                objective_config,
-                                base_dir
+                                processor, objective_config, base_dir
                             )
 
                             trainer.train_and_save(data_config)
-                            print(f"✨Successfully processed {dataset_name} dataset with {tree_config.num_trees} trees\n")
+                            print(
+                                f"✨Successfully processed {dataset_name} dataset with {tree_config.num_trees} trees\n"
+                            )
 
                         except Exception as e:
                             print(f"Error processing {dataset_name} dataset: {str(e)}")
                             continue
+
 
 if __name__ == "__main__":
     main()

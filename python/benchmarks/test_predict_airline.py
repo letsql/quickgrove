@@ -11,7 +11,7 @@ from pathlib import Path
 TEST_DIR = Path(__file__).parent.parent.parent
 MODEL_FILE = (
     TEST_DIR
-    / "data/benches/reg:squarederror/models/airline_satisfaction_model_trees_100_mixed.json"
+    / "data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_mixed.json"
 )
 
 
@@ -27,7 +27,7 @@ def trusty_model_prediciton(batch, model, duration=4):
 def test_xgb_airline(benchmark):
     df = pd.read_csv(
         TEST_DIR
-        / "data/benches/reg:squarederror/data/airline_satisfaction_data_filtered_trees_100_mixed.csv"
+        / "data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_1000_mixed.csv"
     )
     model = xgb.Booster()
     model.load_model(MODEL_FILE)
@@ -42,7 +42,7 @@ def test_xgb_airline(benchmark):
 def test_trusty_airline(benchmark):
     df = pd.read_csv(
         TEST_DIR
-        / "data/benches/reg:squarederror/data/airline_satisfaction_data_filtered_trees_100_mixed.csv"
+        / "data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_1000_mixed.csv"
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
