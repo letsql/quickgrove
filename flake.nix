@@ -1,23 +1,40 @@
 {
-  description = "A devShell for poetry and cargo for trusty";
+  description = "A devShell for uv and cargo for trusty";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
-    poetry2nix.url = "github:nix-community/poetry2nix";
     pre-commit-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs = {
+        pyproject-nix.follows = "pyproject-nix";
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs = {
+        pyproject-nix.follows = "pyproject-nix";
+        uv2nix.follows = "uv2nix";
+        nixpkgs.follows = "nixpkgs";
+      };
+    };
   };
-  outputs = { nixpkgs, rust-overlay, crane, flake-utils, poetry2nix, pre-commit-hooks, ... }:
+  outputs = { self, nixpkgs, rust-overlay, crane, flake-utils, pre-commit-hooks, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [
           (import rust-overlay)
-          poetry2nix.overlays.default
         ];
         pkgs = import nixpkgs {
           inherit system overlays;
@@ -26,23 +43,20 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-        allowedExtensions = [
-          "csv"
-          "json"
-        ];
-
-        hasAllowedExtension = path:
+        src =
           let
-            extension = pkgs.lib.lists.last (pkgs.lib.strings.splitString "." (baseNameOf (toString path)));
+            inherit (pkgs.lib.path) append;
+            inherit (pkgs.lib.fileset) unions toSource fileFilter;
+            inherit (pkgs.lib.lists) any;
+            allowedExtensions = [ "rs" "toml" "csv" "json" ];
+            hasAllowedExtension = file: any (ext: file.hasExt ext) allowedExtensions;
+            _src = ./.;
           in
-          pkgs.lib.lists.any (ext: ext == extension) allowedExtensions;
-
-        customFilter = path: type:
-          let
-            isCargoSource = craneLib.filterCargoSources path type;
-            isAllowed = type == "regular" && hasAllowedExtension path;
-          in
-          isCargoSource || isAllowed;
+          toSource (unions [
+            (append _src "Cargo.toml")
+            (append _src "Cargo.lock")
+            (fileFilter hasAllowedExtension _src)
+          ]);
         cargoDeps = pkgs.rustPlatform.importCargoLock {
           lockFile = ./Cargo.lock;
           outputHashes = {
@@ -51,10 +65,7 @@
         };
         commonArgs = {
           inherit cargoDeps;
-          src = pkgs.lib.cleanSourceWith {
-            src = ./.;
-            filter = customFilter;
-          };
+          inherit src;
           strictDeps = true;
           buildInputs = with pkgs; [
             openssl
@@ -68,8 +79,134 @@
           ];
         };
 
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
+        overlay = workspace.mkPyprojectOverlay {
+          sourcePreference = "wheel";
+        };
+        editableOverlay = _final: prev: {
+          trusty = prev.trusty.override (_: {
+            # we can't use mkEditablePyprojectOverlay: it tries to append "src/"
+            editableRoot = "$REPO_ROOT/python";
+          });
+        };
+        maybeMacosOverrides = final: prev: pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          scikit-learn = prev.scikit-learn.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ final.resolveBuildSystem {
+              meson-python = [ ];
+              ninja = [ ];
+              cython = [ ];
+              numpy = [ ];
+              scipy = [ ];
+            };
+          });
+          scipy = prev.scipy.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ (final.resolveBuildSystem {
+              meson-python = [ ];
+              ninja = [ ];
+              cython = [ ];
+              pythran = [ ];
+              pybind11 = [ ];
+            }) ++ [
+              pkgs.gfortran
+              pkgs.cmake
+              pkgs.xsimd
+              pkgs.pkg-config
+              pkgs.xcbuild.xcrun
+              pkgs.openblas
+            ];
+          });
+          xgboost = prev.xgboost.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ (
+              final.resolveBuildSystem {
+                hatchling = [ ];
+              }) ++ [
+              pkgs.cmake
+            ];
+          });
+        };
+        pyprojectOverrides = _final: prev: {
+          trusty = prev.trusty.overrideAttrs (old: {
+            inherit cargoDeps;
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              pkgs.rustPlatform.cargoSetupHook
+              pkgs.rustPlatform.maturinBuildHook
+              rustToolchain
+            ];
+          });
+        };
+        pyprojectOverrides-editable = _final: prev: {
+          trusty = prev.trusty.overrideAttrs (old: {
+            inherit cargoDeps;
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+              rustToolchain
+            ];
+          });
+        };
+        python = pkgs.python312;
+        pythonSet =
+          # Use base package set from pyproject.nix builders
+          (pkgs.callPackage pyproject-nix.build.packages {
+            inherit python;
+          }).overrideScope
+            (
+              pkgs.lib.composeManyExtensions [
+                pyproject-build-systems.overlays.default
+                overlay
+                maybeMacosOverrides
+                pyprojectOverrides
+              ]
+            );
+        pythonSet-editable =
+          # Use base package set from pyproject.nix builders
+          (pkgs.callPackage pyproject-nix.build.packages {
+            inherit python;
+          }).overrideScope
+            (
+              pkgs.lib.composeManyExtensions [
+                pyproject-build-systems.overlays.default
+                overlay
+                maybeMacosOverrides
+                pyprojectOverrides-editable
+                editableOverlay
+              ]
+            );
+        venv-312 = pythonSet.mkVirtualEnv "trusty-venv" workspace.deps.all;
+        venv-editable-312 = pythonSet-editable.mkVirtualEnv "trusty-editable-venv" workspace.deps.all;
+        maybeMaturinBuildHook = ''
+          set -eu
 
+          repo_dir=$(git rev-parse --show-toplevel)
+          name=trusty
+          if [ "$(basename "$repo_dir")" != "$name" ]; then
+            echo "not in $name, exiting"
+            exit 1
+          fi
+          case $(uname) in
+            Darwin) suffix=dylib ;;
+            *)      suffix=so    ;;
+          esac
+          source=$repo_dir/target/release/maturin/lib$name.$suffix
+          target=$repo_dir/python/$name/_internal.so
+
+          if [ -e "$target" ]; then
+            for other in $(find src -name '*rs'); do
+              if [ "$target" -ot "$other" ]; then
+                rm -f "$target"
+                break
+              fi
+            done
+          fi
+
+          if [ ! -e "$source" -o ! -e "$target" ]; then
+            maturin build --release
+          fi
+          if [ ! -L "$target" -o "$(realpath "$source")" != "$(realpath "$target")" ]; then
+            rm -f "$target"
+            ln -s "$source" "$target"
+          fi
+        '';
+
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         trusty = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
         });
@@ -92,8 +229,7 @@
           doCheck = false;
         });
 
-        datafusion-udf-wrapper = pkgs.writeScriptBin "datafusion-udf" ''
-          #!${pkgs.stdenv.shell}
+        datafusion-udf-wrapper = pkgs.writeShellScriptBin "datafusion-udf" ''
           exec ${datafusion-udf}/bin/datafusion_udf "$@"
         '';
 
@@ -103,95 +239,15 @@
           ln -s ${datasets.airline} $out/data/airline_satisfaction.csv
         '';
 
-        poetryApplication = pkgs.poetry2nix.mkPoetryApplication {
-          projectDir = ./.;
-          preferWheels = true;
-          python = pkgs.python312;
-          src = pkgs.lib.cleanSourceWith {
-            src = ./.;
-            filter = customFilter;
-          };
-          cargoDeps = pkgs.rustPlatform.importCargoLock {
-            lockFile = ./Cargo.lock;
-            outputHashes = {
-              "gbdt-0.1.3" = "sha256-f2uqulFSNGwrDM7RPdGIW11VpJRYexektXjHxTJHHmA=";
-            };
-          };
-          nativeBuildInputs = [
-            pkgs.rustPlatform.cargoSetupHook
-            pkgs.rustPlatform.maturinBuildHook
-            rustToolchain
-            pkgs.pkg-config
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.libiconv
-          ];
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.libiconv
-          ];
-          overrides = pkgs.poetry2nix.overrides.withDefaults
-            (self: super: {
-              xgboost = super.xgboost.overridePythonAttrs (old: { } // pkgs.lib.attrsets.optionalAttrs pkgs.stdenv.isDarwin {
-                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ super.cmake ];
-                cmakeDir = "../cpp_src";
-                preBuild = ''
-                  cd ..
-                '';
-              });
-            });
-        };
-
-        buildMaturinScript = pkgs.writeScriptBin "build-maturin" ''
-          #!${pkgs.stdenv.shell}
-          echo "Building maturin wheel..."
-          maturin build --release
-            
-          WHEEL_PATH="target/wheels"
-          WHEEL_FILE=$(ls ''${WHEEL_PATH}/*.whl | head -n 1)
-          PYTHON_DIR="python/trusty"
-          TMP_DIR="tmp_wheel"
-            
-          # Create temporary directory
-          mkdir -p ''${TMP_DIR}
-            
-          # Unzip the wheel to temporary directory
-          ${pkgs.unzip}/bin/unzip -q "''${WHEEL_FILE}" -d ''${TMP_DIR}
-            
-          # Find the .so file (works for both .so and .dylib)
-          SO_FILE=$(find ''${TMP_DIR} -name "*.so" -o -name "*.dylib")
-            
-          if [ -z "''${SO_FILE}" ]; then
-              echo "No .so or .dylib file found in wheel"
-              exit 1
-          fi
-            
-          # Create the destination directory if it doesn't exist
-          mkdir -p "''${PYTHON_DIR}"
-            
-          # Copy the .so file to the Python package directory
-          cp "''${SO_FILE}" "''${PYTHON_DIR}/"
-            
-          echo "Copied $(basename "''${SO_FILE}") to ''${PYTHON_DIR}/"
-            
-          # Clean up
-          rm -rf ''${TMP_DIR}
-        '';
-
-        processScript = pkgs.writeScriptBin "prepare-benchmarks" ''
-          #!${pkgs.stdenv.shell}
-          
+        prepare-benchmarks = pkgs.writeShellScriptBin "prepare-benchmarks" ''
           mkdir -p data
           echo "Copying data files from Nix store..."
           cp -f ${dataFiles}/data/* data/
-          ${pythonEnv}/bin/python ${./.}/app/generate_examples.py --data_dir data --base_dir data --generation_type benchmark
+          # must use -editable else we rebuild every time flake.nix changes
+          ${venv-editable-312}/bin/python -m trusty.generate_examples --data_dir data --base_dir data --generation_type benchmark
 
         '';
-        pythonEnv = poetryApplication.dependencyEnv;
-        clippy-hook = pkgs.writeScript "clippy-hook" ''
-          #!${pkgs.stdenv.shell}
-          export CARGO_HOME="$PWD/.cargo"
-          export RUSTUP_HOME="$PWD/.rustup"
-          export PATH="${rustToolchain}/bin:$PATH"
-          mkdir -p target
+        clippy-hook = pkgs.writeShellScriptBin "clippy-hook" ''
           exec ${rustToolchain}/bin/cargo clippy --all-targets --all-features -- -D warnings
         '';
 
@@ -211,7 +267,7 @@
             };
           };
           tools = {
-            ruff = pkgs.ruff;
+            inherit (pkgs) ruff;
             rustfmt = rustToolchain;
             clippy = rustToolchain;
           };
@@ -219,18 +275,20 @@
       in
       {
         apps = rec {
-          poetryApp = {
+          ipython = {
             type = "app";
-            program = "${poetryApplication.dependencyEnv}/bin/ipython";
+            program = "${venv-312}/bin/ipython";
           };
-          default = poetryApp;
+          default = ipython;
+        };
+        lib = {
+          inherit venv-312 venv-editable-312;
+          inherit pythonSet pythonSet-editable;
         };
         packages = {
-          trusty = trusty;
-          pyApp = poetryApplication;
+          inherit trusty;
           data = dataFiles;
           datafusion-udf-example = datafusion-udf-wrapper;
-          inherit poetryApplication;
           default = datafusion-udf-wrapper;
         };
 
@@ -257,17 +315,7 @@
               rustToolchain
             ];
 
-            cargoDeps = pkgs.rustPlatform.importCargoLock {
-              lockFile = ./Cargo.lock;
-              outputHashes = {
-                "gbdt-0.1.3" = "sha256-f2uqulFSNGwrDM7RPdGIW11VpJRYexektXjHxTJHHmA=";
-              };
-            };
-
             buildPhase = ''
-              export CARGO_HOME="$PWD/.cargo"
-              export RUSTUP_HOME="$PWD/.rustup"
-              export PATH="${rustToolchain}/bin:$PATH"
               ${pre-commit-check.buildCommand}
             '';
 
@@ -278,30 +326,61 @@
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
         };
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [ trusty ];
-          buildInputs = [
-            rustToolchain
-            pythonEnv
-            pkgs.poetry
-            pkgs.maturin
-            # add pre-commit dependencies
-            pkgs.ruff
-            pkgs.rustfmt
-            pkgs.nixpkgs-fmt
-            processScript
-            buildMaturinScript
-          ];
-          shellHook = ''
-            ${pre-commit-check.shellHook}
-            echo "Run 'build-maturin' to rebuild and install the package"
-          '';
-        };
-        devShells.danShell = pkgs.mkShell {
-          buildInputs = [
-            poetryApplication
-            rustToolchain
-          ];
+        devShells = {
+          default = self.devShells.${system}.venv-editable-312;
+          venv-312 = pkgs.mkShell {
+            packages = [
+              venv-312
+              pkgs.uv
+              rustToolchain
+              prepare-benchmarks
+            ];
+            shellHook = ''
+              unset PYTHONPATH
+              export UV_PYTHON_DOWNLOADS=never
+            '';
+          };
+          venv-editable-312 = pkgs.mkShell {
+            packages = [
+              venv-editable-312
+              pkgs.uv
+              rustToolchain
+              prepare-benchmarks
+            ];
+            shellHook = ''
+              unset PYTHONPATH
+              export UV_NO_SYNC=1
+              export UV_PYTHON_DOWNLOADS=never
+              export REPO_ROOT=$(git rev-parse --show-toplevel)
+            '' + maybeMaturinBuildHook;
+          };
+          impure = pkgs.mkShell {
+            packages = [
+              python
+              pkgs.uv
+              rustToolchain
+            ];
+            shellHook = ''
+              unset PYTHONPATH
+              export UV_PYTHON_DOWNLOADS=never
+            '';
+          };
+          p2n = pkgs.mkShell {
+            inputsFrom = [ trusty ];
+            buildInputs = [
+              rustToolchain
+              pkgs.maturin
+              # add pre-commit dependencies
+              pkgs.ruff
+              pkgs.rustfmt
+              pkgs.nixpkgs-fmt
+              prepare-benchmarks
+            ];
+            shellHook = ''
+              ${pre-commit-check.shellHook}
+              echo "Run 'build-maturin' to rebuild and install the package"
+            '';
+          };
         };
       });
 }
