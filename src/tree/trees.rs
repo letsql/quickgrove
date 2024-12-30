@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
+use std::fs;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -824,6 +825,14 @@ impl GradientBoostedDecisionTrees {
 }
 
 impl ModelLoader for GradientBoostedDecisionTrees {
+    fn read_json(path: &str) -> Result<Self, ModelError> {
+        let data = fs::read_to_string(path).map_err(|e| ModelError::IoError(e.to_string()))?;
+        let result: Value =
+            serde_json::from_str(&data).map_err(|e| ModelError::IoError(e.to_string()))?;
+        let model = Self::load_from_json(&result)?;
+        Ok(model)
+    }
+
     fn load_from_json(json: &Value) -> Result<Self, ModelError> {
         let objective_type = XGBoostParser::parse_objective(json)?;
         let (feature_names, feature_types) = XGBoostParser::parse_feature_metadata(json)?;

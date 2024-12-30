@@ -1,4 +1,3 @@
-import json
 import pandas as pd
 import numpy as np
 import pyarrow as pa
@@ -16,13 +15,9 @@ def test_predict():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    with open(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json",
-        "r",
-    ) as f:
-        model_json = json.load(f)
-        model_json_str = json.dumps(model_json)
-    model = trusty.load_model(model_json_str)
+    model = trusty.read_json(
+        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+    )
     actual_preds = df["prediction"].copy().to_list()
     df = df.drop(["target", "prediction"], axis=1)
     batch = pa.RecordBatch.from_pandas(df)
@@ -38,13 +33,9 @@ def test_pruning():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     ).query("carat <0.2")
-    with open(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json",
-        "r",
-    ) as f:
-        model_json = json.load(f)
-        model_json_str = json.dumps(model_json)
-    model = trusty.load_model(model_json_str)
+    model = trusty.read_json(
+        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+    )
     batch = pa.RecordBatch.from_pandas(df)
     predicates = [Feature("carat") < 0.2]
     actual_preds = df["prediction"].copy().to_list()

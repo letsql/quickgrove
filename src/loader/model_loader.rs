@@ -10,6 +10,9 @@ pub enum ModelError {
     #[error("Invalid field type: {0}")]
     InvalidFieldType(String),
 
+    #[error("Model IO Error: {0}")]
+    IoError(String),
+
     #[error("JSON parsing error: {0}")]
     JsonParse(#[from] serde_json::Error),
 
@@ -19,4 +22,6 @@ pub enum ModelError {
 
 pub trait ModelLoader: Sized {
     fn load_from_json(json: &Value) -> Result<Self, ModelError>;
+
+    fn read_json(path: &str) -> Result<Self, ModelError>;
 }
