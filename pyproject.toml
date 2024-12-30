@@ -43,6 +43,7 @@ maturin = "^1.7.8"
 pytest = "^8.3.4"
 pytest-benchmark = "^5.1.0"
 
+requests = "^2.32.3"
 [tool.maturin]
 python-source = "python"
 module-name = "trusty._internal"
