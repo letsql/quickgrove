@@ -21,7 +21,7 @@ fn trusty(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[pymodule]
 fn _internal(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_wrapped(wrap_pyfunction!(python::load_model))?;
+    m.add_wrapped(wrap_pyfunction!(python::read_json))?;
     m.add_class::<python::PyGradientBoostedDecisionTrees>()?;
     m.add_class::<python::Feature>()?;
     Ok(())

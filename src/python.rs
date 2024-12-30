@@ -9,6 +9,9 @@ use arrow::pyarrow::PyArrowType;
 use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyo3::types::PyType;
+use std::path::PathBuf;
+
 use pyo3_arrow::{error::PyArrowResult, PyArray};
 use std::sync::Arc;
 
@@ -48,6 +51,16 @@ impl PyGradientBoostedDecisionTrees {
         let model_data: serde_json::Value = serde_json::from_str(model_json)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let model = GradientBoostedDecisionTrees::load_from_json(&model_data)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        Ok(PyGradientBoostedDecisionTrees { model })
+    }
+
+    #[classmethod]
+    fn read_json(_cls: Py<PyType>, path: PathBuf) -> PyResult<Self> {
+        let str_path = path
+            .to_str()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
+        let model = GradientBoostedDecisionTrees::read_json(str_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(PyGradientBoostedDecisionTrees { model })
     }
@@ -127,6 +140,11 @@ impl PyGradientBoostedDecisionTrees {
 }
 
 #[pyfunction]
-pub fn load_model(model_json: &str) -> PyResult<PyGradientBoostedDecisionTrees> {
-    PyGradientBoostedDecisionTrees::new(model_json)
+pub fn read_json(path: PathBuf) -> PyResult<PyGradientBoostedDecisionTrees> {
+    let str_path = path
+        .to_str()
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
+    let model = GradientBoostedDecisionTrees::read_json(str_path)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+    Ok(PyGradientBoostedDecisionTrees { model })
 }
