@@ -69,7 +69,7 @@ impl PyGradientBoostedDecisionTrees {
         &self,
         py: Python,
         py_record_batches: &Bound<'_, PyList>,
-    ) -> PyArrowResult<PyArray> {
+    ) -> PyArrowResult<PyObject> {
         let mut batches = Vec::with_capacity(py_record_batches.len());
 
         for py_batch in py_record_batches.iter() {
@@ -115,7 +115,7 @@ impl PyGradientBoostedDecisionTrees {
         })?;
 
         let field = Field::new("predictions", DataType::Float32, false);
-        Ok(PyArray::new(Arc::new(predictions_array), Arc::new(field)))
+        Ok(PyArray::new(Arc::new(predictions_array), Arc::new(field)).to_pyarrow(py)?)
     }
 
     fn prune(&self, predicates: &Bound<'_, PyList>) -> PyResult<Self> {
