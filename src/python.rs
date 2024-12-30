@@ -134,8 +134,16 @@ impl PyGradientBoostedDecisionTrees {
         })
     }
 
-    fn print_tree_info(&self) {
-        self.model.print_tree_info();
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("{}", self.model))
+    }
+
+    #[pyo3(signature = (tree_index=None))]
+    fn tree_info(&self, tree_index: Option<usize>) -> PyResult<String> {
+        Ok(match tree_index {
+            Some(idx) => format!("{}", self.model.trees[idx]),
+            None => format!("{}", self.model),
+        })
     }
 }
 
