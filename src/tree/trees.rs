@@ -824,6 +824,25 @@ impl GradientBoostedDecisionTrees {
     }
 }
 
+impl std::fmt::Display for GradientBoostedDecisionTrees {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let depths = self.tree_depths();
+        let avg_depth = depths.iter().sum::<usize>() as f64 / depths.len() as f64;
+        let max_depth = depths.iter().max().unwrap_or(&0);
+        let total_nodes = self
+            .trees
+            .iter()
+            .map(|tree| tree.num_nodes())
+            .sum::<usize>();
+
+        writeln!(f, "Total number of trees: {}", self.num_trees())?;
+        writeln!(f, "Tree depths: {:?}", depths)?;
+        writeln!(f, "Average tree depth: {:.2}", avg_depth)?;
+        writeln!(f, "Max tree depth: {}", max_depth)?;
+        writeln!(f, "Total number of nodes: {}", total_nodes)
+    }
+}
+
 impl ModelLoader for GradientBoostedDecisionTrees {
     fn read_json(path: &str) -> Result<Self, ModelError> {
         let data = fs::read_to_string(path).map_err(|e| ModelError::IoError(e.to_string()))?;
