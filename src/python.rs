@@ -65,6 +65,16 @@ impl PyGradientBoostedDecisionTrees {
         Ok(PyGradientBoostedDecisionTrees { model })
     }
 
+    #[classmethod]
+    fn read_json(_cls: Py<PyType>, path: PathBuf) -> PyResult<Self> {
+        let str_path = path
+            .to_str()
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
+        let model = GradientBoostedDecisionTrees::read_json(str_path)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        Ok(PyGradientBoostedDecisionTrees { model })
+    }
+
     fn predict_batches(
         &self,
         py: Python,
