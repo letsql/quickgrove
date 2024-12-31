@@ -25,5 +25,3 @@ df = df.drop(["target", "prediction"], axis=1)
 
 batch = pa.RecordBatch.from_pandas(df)
 predictions = model.predict_batches([batch])
-
-pyarrow_array = pa.array(predictions)
