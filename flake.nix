@@ -266,13 +266,14 @@
             };
             clippy = {
               enable = true;
-              entry = toString clippy-hook;
+              entry = toString (clippy-hook + "/bin/clippy-hook");
             };
           };
           tools = {
             inherit (pkgs) ruff;
             rustfmt = rustToolchain;
             clippy = rustToolchain;
+
           };
         };
       in
@@ -308,8 +309,9 @@
 
             nativeBuildInputs = [
               rustToolchain
+              pkgs.rustPlatform.cargoSetupHook
             ];
-
+            inherit cargoDeps;
             buildInputs = with pkgs; [
               git
               openssl
