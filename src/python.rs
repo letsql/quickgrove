@@ -1,5 +1,5 @@
 use crate::loader::ModelLoader;
-use crate::tree::GradientBoostedDecisionTrees;
+use crate::tree::{GradientBoostedDecisionTrees, PredictorConfig};
 use crate::Condition;
 use crate::Predicate;
 use arrow::array::ArrayRef;
@@ -65,12 +65,20 @@ impl PyGradientBoostedDecisionTrees {
         Ok(PyGradientBoostedDecisionTrees { model })
     }
 
+    #[pyo3(signature = (py_record_batches, *, row_chunk_size=64, tree_chunk_size=8))]
     fn predict_batches(
-        &self,
+        &mut self,
         py: Python,
         py_record_batches: &Bound<'_, PyList>,
+        row_chunk_size: usize,
+        tree_chunk_size: usize,
     ) -> PyArrowResult<PyObject> {
         let mut batches = Vec::with_capacity(py_record_batches.len());
+
+        self.model.set_config(PredictorConfig {
+            row_chunk_size,
+            tree_chunk_size,
+        });
 
         for py_batch in py_record_batches.iter() {
             let py_arrow_type = py_batch.extract::<PyArrowType<RecordBatch>>()?;

@@ -7,7 +7,9 @@ use rand::Rng;
 use std::error::Error;
 use std::fs::File;
 use std::sync::Arc;
-use trusty::tree::{FeatureTree, FeatureTreeBuilder, FeatureType, GradientBoostedDecisionTrees};
+use trusty::tree::{
+    FeatureTree, FeatureTreeBuilder, FeatureType, GradientBoostedDecisionTrees, PredictorConfig,
+};
 use trusty::Objective;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -429,6 +431,7 @@ pub mod feature_tree {
             feature_types: Arc::new(feature_types),
             base_score: 0.5,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         }
     }
 
