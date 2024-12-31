@@ -37,7 +37,7 @@ def test_trusty_diamonds(benchmark):
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
 
-    model = trusty.read_json(MODEL_FILE)
+    model = trusty.json_load(MODEL_FILE)
 
     batch = pa.RecordBatch.from_pandas(df)
     actual_results = benchmark(model.predict_batches, [batch])

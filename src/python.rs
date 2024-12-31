@@ -50,17 +50,17 @@ impl PyGradientBoostedDecisionTrees {
     fn new(model_json: &str) -> PyResult<Self> {
         let model_data: serde_json::Value = serde_json::from_str(model_json)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        let model = GradientBoostedDecisionTrees::load_from_json(&model_data)
+        let model = GradientBoostedDecisionTrees::json_loads(&model_data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(PyGradientBoostedDecisionTrees { model })
     }
 
     #[classmethod]
-    fn read_json(_cls: Py<PyType>, path: PathBuf) -> PyResult<Self> {
+    fn json_load(_cls: Py<PyType>, path: PathBuf) -> PyResult<Self> {
         let str_path = path
             .to_str()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
-        let model = GradientBoostedDecisionTrees::read_json(str_path)
+        let model = GradientBoostedDecisionTrees::json_load(str_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         Ok(PyGradientBoostedDecisionTrees { model })
     }
@@ -148,11 +148,11 @@ impl PyGradientBoostedDecisionTrees {
 }
 
 #[pyfunction]
-pub fn read_json(path: PathBuf) -> PyResult<PyGradientBoostedDecisionTrees> {
+pub fn json_load(path: PathBuf) -> PyResult<PyGradientBoostedDecisionTrees> {
     let str_path = path
         .to_str()
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
-    let model = GradientBoostedDecisionTrees::read_json(str_path)
+    let model = GradientBoostedDecisionTrees::json_load(str_path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
     Ok(PyGradientBoostedDecisionTrees { model })
 }

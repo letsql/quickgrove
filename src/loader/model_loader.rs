@@ -21,7 +21,7 @@ pub enum ModelError {
 }
 
 pub trait ModelLoader: Sized {
-    fn load_from_json(json: &Value) -> Result<Self, ModelError>;
+    fn json_loads(json: &Value) -> Result<Self, ModelError>;
 
-    fn read_json(path: &str) -> Result<Self, ModelError>;
+    fn json_load(path: &str) -> Result<Self, ModelError>;
 }

@@ -446,7 +446,7 @@ impl ModelTester {
     ) -> Result<GradientBoostedDecisionTrees, Box<dyn Error>> {
         let model_data: Value = serde_json::from_reader(BufReader::new(File::open(model_path)?))?;
 
-        Ok(GradientBoostedDecisionTrees::load_from_json(&model_data)?)
+        Ok(GradientBoostedDecisionTrees::json_loads(&model_data)?)
     }
 
     pub fn extract_expected_predictions<'a>(
