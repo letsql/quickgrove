@@ -287,7 +287,6 @@
         lib = {
           inherit venv-312 venv-editable-312;
           inherit pythonSet pythonSet-editable;
-          inherit src;
         };
         packages = {
           inherit trusty;
@@ -308,7 +307,6 @@
             src = ./.;
 
             nativeBuildInputs = [
-              pkgs.rustPlatform.cargoSetupHook
               rustToolchain
             ];
 
