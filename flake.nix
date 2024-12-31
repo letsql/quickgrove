@@ -50,13 +50,16 @@
             inherit (pkgs.lib.lists) any;
             allowedExtensions = [ "rs" "toml" "csv" "json" ];
             hasAllowedExtension = file: any (ext: file.hasExt ext) allowedExtensions;
-            _src = ./.;
+            root = ./.;
           in
-          toSource (unions [
-            (append _src "Cargo.toml")
-            (append _src "Cargo.lock")
-            (fileFilter hasAllowedExtension _src)
-          ]);
+          toSource {
+            inherit root;
+            fileset = (unions [
+              (append root "Cargo.toml")
+              (append root "Cargo.lock")
+              (fileFilter hasAllowedExtension root)
+            ]);
+          };
         cargoDeps = pkgs.rustPlatform.importCargoLock {
           lockFile = ./Cargo.lock;
           outputHashes = {
@@ -284,6 +287,7 @@
         lib = {
           inherit venv-312 venv-editable-312;
           inherit pythonSet pythonSet-editable;
+          inherit src;
         };
         packages = {
           inherit trusty;
