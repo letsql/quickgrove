@@ -561,12 +561,28 @@ impl Default for FeatureTreeBuilder {
 }
 
 #[derive(Debug, Clone)]
+pub struct PredictorConfig {
+    pub row_chunk_size: usize,
+    pub tree_chunk_size: usize,
+}
+
+impl Default for PredictorConfig {
+    fn default() -> Self {
+        Self {
+            row_chunk_size: 8,
+            tree_chunk_size: 64,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct GradientBoostedDecisionTrees {
     pub trees: Vec<FeatureTree>,
     pub feature_names: Arc<Vec<String>>,
     pub base_score: f32,
     pub feature_types: Arc<Vec<FeatureType>>,
     pub objective: Objective,
+    pub config: PredictorConfig,
 }
 
 impl Default for GradientBoostedDecisionTrees {
@@ -577,11 +593,20 @@ impl Default for GradientBoostedDecisionTrees {
             feature_types: Arc::new(vec![]),
             base_score: 0.0,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         }
     }
 }
 
 impl GradientBoostedDecisionTrees {
+    pub fn config(&self) -> &PredictorConfig {
+        &self.config
+    }
+
+    pub fn set_config(&mut self, config: PredictorConfig) {
+        self.config = config;
+    }
+
     pub fn predict_batches(&self, batches: &[RecordBatch]) -> Result<Float32Array, ArrowError> {
         if batches.len() == 1 {
             return self.predict_arrays(batches[0].columns());
@@ -611,19 +636,20 @@ impl GradientBoostedDecisionTrees {
         let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
 
         let (num_rows, num_features) = (features[0].len(), features.len());
-        const TREE_CHUNK_SIZE: usize = 8;
-        const ROW_CHUNK_SIZE: usize = 64;
+        // const TREE_CHUNK_SIZE: usize = 8;
+
+        // const ROW_CHUNK_SIZE: usize = 64;
 
         let predictions: Vec<f32> = (0..num_rows)
             .into_par_iter()
-            .chunks(ROW_CHUNK_SIZE)
+            .chunks(self.config.row_chunk_size)
             .fold(
-                || Vec::with_capacity(ROW_CHUNK_SIZE),
+                || Vec::with_capacity(self.config.row_chunk_size),
                 |mut chunk_results, row_indices| {
                     let mut row_features = vec![0.0; num_features];
                     let mut chunk_scores = vec![self.base_score; row_indices.len()];
 
-                    for tree_chunk in self.trees.chunks(TREE_CHUNK_SIZE) {
+                    for tree_chunk in self.trees.chunks(self.config.tree_chunk_size) {
                         if let Some(first_tree) = tree_chunk.first() {
                             if let Some(root) = first_tree.tree.get_node(0) {
                                 cpu_features.prefetch(root as *const _);
@@ -801,26 +827,8 @@ impl GradientBoostedDecisionTrees {
             feature_types: self.feature_types.clone(),
             base_score: self.base_score,
             objective: self.objective.clone(),
+            config: self.config.clone(),
         }
-    }
-
-    pub fn print_tree_info(&self) {
-        println!("Total number of trees: {}", self.num_trees());
-
-        let depths = self.tree_depths();
-        println!("Tree depths: {:?}", depths);
-        println!(
-            "Average tree depth: {:.2}",
-            depths.iter().sum::<usize>() as f64 / depths.len() as f64
-        );
-        println!("Max tree depth: {}", depths.iter().max().unwrap_or(&0));
-        println!(
-            "Total number of nodes: {}",
-            self.trees
-                .iter()
-                .map(|tree| tree.num_nodes())
-                .sum::<usize>()
-        );
     }
 }
 
@@ -883,6 +891,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             feature_names: Arc::new(feature_names),
             feature_types: Arc::new(feature_types),
             objective: objective_type,
+            config: PredictorConfig::default(),
         })
     }
 }
@@ -1095,6 +1104,7 @@ mod tests {
             feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.5,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         };
 
         let batch = create_sample_record_batch();
@@ -1308,6 +1318,7 @@ mod tests {
             ]),
             base_score: 0.0,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         };
 
         let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
@@ -1353,7 +1364,7 @@ mod tests {
         )
         .unwrap();
 
-        let trees: Vec<FeatureTree> = (0..100) // goes into batch processing if trees>=100
+        let trees: Vec<FeatureTree> = (0..100) // is this still needed?
             .map(|_| create_sample_tree())
             .collect();
 
@@ -1363,6 +1374,7 @@ mod tests {
             feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         };
 
         let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
@@ -1391,6 +1403,7 @@ mod tests {
             feature_types: Arc::new(vec![FeatureType::Float, FeatureType::Float]),
             base_score: 0.0,
             objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
         };
 
         let result = gbdt.predict_arrays(batch.columns());
