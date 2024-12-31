@@ -844,15 +844,15 @@ impl std::fmt::Display for GradientBoostedDecisionTrees {
 }
 
 impl ModelLoader for GradientBoostedDecisionTrees {
-    fn read_json(path: &str) -> Result<Self, ModelError> {
+    fn json_load(path: &str) -> Result<Self, ModelError> {
         let data = fs::read_to_string(path).map_err(|e| ModelError::IoError(e.to_string()))?;
         let result: Value =
             serde_json::from_str(&data).map_err(|e| ModelError::IoError(e.to_string()))?;
-        let model = Self::load_from_json(&result)?;
+        let model = Self::json_loads(&result)?;
         Ok(model)
     }
 
-    fn load_from_json(json: &Value) -> Result<Self, ModelError> {
+    fn json_loads(json: &Value) -> Result<Self, ModelError> {
         let objective_type = XGBoostParser::parse_objective(json)?;
         let (feature_names, feature_types) = XGBoostParser::parse_feature_metadata(json)?;
         let base_score = XGBoostParser::parse_base_score(json)?;

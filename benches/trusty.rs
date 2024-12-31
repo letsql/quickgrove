@@ -267,7 +267,7 @@ fn load_model(path: &str) -> Result<GradientBoostedDecisionTrees> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let model_data: Value = serde_json::from_reader(reader)?;
-    Ok(GradientBoostedDecisionTrees::load_from_json(&model_data)?)
+    Ok(GradientBoostedDecisionTrees::json_loads(&model_data)?)
 }
 
 criterion_group! {

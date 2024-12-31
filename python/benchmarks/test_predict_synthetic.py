@@ -37,7 +37,7 @@ def test_xgb_synthetic_size(benchmark, size):
 def test_trusty_synthetic_size(benchmark, size):
     df, expected_results = load_and_prepare_data()
 
-    model = trusty.read_json(MODEL_FILE)
+    model = trusty.json_load(MODEL_FILE)
 
     sample_df = df.sample(size, random_state=42)
     batch = pa.RecordBatch.from_pandas(sample_df)
