@@ -15,7 +15,7 @@ def test_predict():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    model = trusty.load_json(
+    model = trusty.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()
@@ -33,7 +33,7 @@ def test_pruning():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     ).query("carat <0.2")
-    model = trusty.load_json(
+    model = trusty.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     batch = pa.RecordBatch.from_pandas(df)
