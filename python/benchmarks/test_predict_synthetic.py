@@ -1,3 +1,4 @@
+
 import xgboost as xgb
 import pandas as pd
 import pyarrow as pa
@@ -12,7 +13,7 @@ MODEL_FILE = (
     / f"data/benches/reg:squarederror/models/{DATASET}_model_trees_{N_TREES}_float64.json"
 )
 
-SAMPLE_SIZES = [2, 16, 32, 64, 128, 256, 512, 1024, 8192, 10000]
+SAMPLE_SIZES = [2, 16, 32, 64, 128, 256, 512, 1024, 8192]
 
 
 def load_and_prepare_data():
