@@ -1,5 +1,5 @@
 use crate::loader::ModelLoader;
-use crate::tree::{GradientBoostedDecisionTrees, PredictorConfig};
+use crate::tree::{FeatureTree, GradientBoostedDecisionTrees, PredictorConfig};
 use crate::Condition;
 use crate::Predicate;
 use arrow::array::ArrayRef;
@@ -36,6 +36,18 @@ impl Feature {
 
     fn __ge__(&self, other: f64) -> (String, bool, f64) {
         (self.name.clone(), true, other) // true means GreaterThanOrEqual
+    }
+}
+
+#[pyclass]
+pub struct PyFeatureTree {
+    tree: FeatureTree,
+}
+
+#[pymethods]
+impl PyFeatureTree {
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("{}", self.tree))
     }
 }
 
@@ -147,11 +159,19 @@ impl PyGradientBoostedDecisionTrees {
     }
 
     #[pyo3(signature = (tree_index=None))]
-    fn tree_info(&self, tree_index: Option<usize>) -> PyResult<String> {
-        Ok(match tree_index {
-            Some(idx) => format!("{}", self.model.trees[idx]),
-            None => format!("{}", self.model),
-        })
+    fn tree_info(&self, tree_index: Option<usize>) -> PyResult<PyFeatureTree> {
+        match tree_index {
+            Some(idx) if idx < self.model.trees.len() => Ok(PyFeatureTree {
+                tree: self.model.trees[idx].clone(),
+            }),
+            Some(idx) => Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Tree index {} out of range",
+                idx
+            ))),
+            None => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "tree_index is required",
+            )),
+        }
     }
 }
 
