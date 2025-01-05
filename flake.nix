@@ -175,6 +175,18 @@
             );
         venv-312 = pythonSet.mkVirtualEnv "trusty-venv" workspace.deps.all;
         venv-editable-312 = pythonSet-editable.mkVirtualEnv "trusty-editable-venv" workspace.deps.all;
+        flameScript = pkgs.writeScriptBin "flame" ''
+          #!${pkgs.stdenv.shell}
+          if [ -z "$1" ]; then
+            echo "Usage: flame <example_name>"
+            echo "Run flamegraph analysis on an example"
+            echo ""
+            echo "Available examples:"
+            cargo run --package examples 2>&1 | grep "available binaries:" | sed 's/available binaries: //' | tr ',' '\n' | sed 's/^[ ]*/  /' | tr -d '.'
+            exit 1
+          fi
+          cargo flamegraph --package examples --bin "$1" --post-process 'flamelens --echo'
+        '';
         maybeMaturinBuildHook = ''
           set -eu
 
@@ -340,6 +352,7 @@
               prepare-benchmarks
             ];
             shellHook = ''
+              echo "DEBUG: Entered venv-312 shell"
               unset PYTHONPATH
               export UV_PYTHON_DOWNLOADS=never
             '';
@@ -350,13 +363,16 @@
               pkgs.uv
               rustToolchain
               prepare-benchmarks
+              flameScript
             ];
             shellHook = ''
+              echo "DEBUG: Entered venv-editable-312 shell"
               unset PYTHONPATH
               export UV_NO_SYNC=1
               export UV_PYTHON_DOWNLOADS=never
               export REPO_ROOT=$(git rev-parse --show-toplevel)
-            '' + maybeMaturinBuildHook;
+              ${maybeMaturinBuildHook}
+            '';
           };
           impure = pkgs.mkShell {
             packages = [
@@ -365,6 +381,7 @@
               rustToolchain
             ];
             shellHook = ''
+              echo "DEBUG: Entered impure shell"
               unset PYTHONPATH
               export UV_PYTHON_DOWNLOADS=never
             '';
@@ -374,7 +391,6 @@
             buildInputs = [
               rustToolchain
               pkgs.maturin
-              # add pre-commit dependencies
               pkgs.ruff
               pkgs.rustfmt
               pkgs.nixpkgs-fmt
@@ -382,7 +398,6 @@
             ];
             shellHook = ''
               ${pre-commit-check.shellHook}
-              echo "Run 'build-maturin' to rebuild and install the package"
             '';
           };
         };
