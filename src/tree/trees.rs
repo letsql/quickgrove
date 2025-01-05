@@ -12,7 +12,7 @@ use arrow::record_batch::RecordBatch;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::sync::Arc;
@@ -607,6 +607,23 @@ impl GradientBoostedDecisionTrees {
         self.config = config;
     }
 
+    pub fn get_required_features(&self) -> HashSet<usize> {
+        let mut required_features = HashSet::new();
+
+        for tree in &self.trees {
+            if let Some(root) = tree.tree.get_node(tree.tree.get_root_index()) {
+                collect_required_features(
+                    &tree.tree,
+                    root,
+                    tree.feature_offset,
+                    &mut required_features,
+                );
+            }
+        }
+
+        required_features
+    }
+
     pub fn predict_batches(&self, batches: &[RecordBatch]) -> Result<Float32Array, ArrowError> {
         if batches.len() == 1 {
             return self.predict_arrays(batches[0].columns());
@@ -615,10 +632,19 @@ impl GradientBoostedDecisionTrees {
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         let mut builder = Float32Builder::with_capacity(total_rows);
 
+        let required_features = self.get_required_features();
+
         for batch in batches {
-            let predictions = self.predict_arrays(batch.columns())?;
-            let values: &[f32] = predictions.values();
-            builder.append_slice(values);
+            let required_columns: Vec<ArrayRef> = batch
+                .columns()
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| required_features.contains(i))
+                .map(|(_, col)| col.clone())
+                .collect();
+
+            let predictions = self.predict_arrays(&required_columns)?;
+            builder.append_slice(predictions.values());
         }
 
         Ok(builder.finish())
@@ -636,9 +662,6 @@ impl GradientBoostedDecisionTrees {
         let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
 
         let (num_rows, num_features) = (features[0].len(), features.len());
-        // const TREE_CHUNK_SIZE: usize = 8;
-
-        // const ROW_CHUNK_SIZE: usize = 64;
 
         let predictions: Vec<f32> = (0..num_rows)
             .into_par_iter()
@@ -893,6 +916,28 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             objective: objective_type,
             config: PredictorConfig::default(),
         })
+    }
+}
+
+fn collect_required_features(
+    tree: &VecTreeWithTreeNode,
+    root: &TreeNode,
+    feature_offset: usize,
+    features: &mut HashSet<usize>,
+) {
+    let mut stack = vec![root];
+
+    while let Some(node) = stack.pop() {
+        if !node.is_leaf() {
+            features.insert(feature_offset + node.feature_index() as usize);
+
+            if let Some(right) = tree.get_right_child(node) {
+                stack.push(right);
+            }
+            if let Some(left) = tree.get_left_child(node) {
+                stack.push(left);
+            }
+        }
     }
 }
 
@@ -1454,5 +1499,27 @@ mod tests {
             .unwrap();
         let predicitons_after_pruning = pruned1.predict(&[f32::NAN, 0.3, 0.8]);
         assert_eq!(predictions_right, predicitons_after_pruning);
+    }
+
+    #[test]
+    fn test_required_features() {
+        let tree = create_sample_tree(); // Your existing test helper
+        let gbdt = GradientBoostedDecisionTrees {
+            trees: vec![tree],
+            feature_names: Arc::new(vec!["f0".to_string(), "f1".to_string(), "f2".to_string()]),
+            feature_types: Arc::new(vec![
+                FeatureType::Float,
+                FeatureType::Float,
+                FeatureType::Float,
+            ]),
+            base_score: 0.0,
+            objective: Objective::SquaredError,
+            config: PredictorConfig::default(),
+        };
+
+        let required = gbdt.get_required_features();
+        assert!(required.contains(&0)); // Only feature0 is used in sample tree
+        assert!(!required.contains(&1));
+        assert!(!required.contains(&2));
     }
 }
