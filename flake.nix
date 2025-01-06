@@ -177,15 +177,69 @@
         venv-editable-312 = pythonSet-editable.mkVirtualEnv "trusty-editable-venv" workspace.deps.all;
         flameScript = pkgs.writeScriptBin "flame" ''
           #!${pkgs.stdenv.shell}
-          if [ -z "$1" ]; then
-            echo "Usage: flame <example_name>"
-            echo "Run flamegraph analysis on an example"
-            echo ""
+          
+          show_examples() {
             echo "Available examples:"
             cargo run --package examples 2>&1 | grep "available binaries:" | sed 's/available binaries: //' | tr ',' '\n' | sed 's/^[ ]*/  /' | tr -d '.'
+          }
+          
+          show_help() {
+            echo "Usage: flame <type> <name> [test_filter]"
+            echo ""
+            echo "Types:"
+            echo "  example <name>          - Profile an example binary"
+            echo "    Example: flame example airline_prediction"
+            echo ""
+            echo "  bench <bench> <filter>  - Profile a benchmark with optional test filter"
+            echo "    Example: flame bench trusty trusty/airline/float64"
+            echo ""
+            show_examples
+          }
+        
+          if [ -z "$1" ] || [ "$1" = "help" ]; then
+            show_help
             exit 1
           fi
-          cargo flamegraph --package examples --bin "$1" --post-process 'flamelens --echo'
+        
+          type="$1"
+          name="$2"
+          test_filter="$3"
+        
+          case "$type" in
+            "example")
+              if [ -z "$name" ]; then
+                echo "Error: No example specified"
+                echo ""
+                show_help
+                exit 1
+              fi
+              # Try running cargo check first to see if example exists
+              if ! cargo check --quiet --package examples --bin "$name" 2>/dev/null; then
+                echo "Error: Example '$name' not found"
+                echo ""
+                show_examples
+                exit 1
+              fi
+              cargo flamegraph --package examples --bin "$name" --post-process 'flamelens --echo'
+              ;;
+            "bench")
+              if [ -z "$name" ]; then
+                echo "Error: No benchmark specified"
+                show_help
+                exit 1
+              fi
+              if [ -z "$test_filter" ]; then
+                cargo flamegraph --bench "$name" --post-process 'flamelens --echo'
+              else
+                cargo flamegraph --bench "$name" --post-process 'flamelens --echo' -- "$test_filter"
+              fi
+              ;;
+            *)
+              echo "Unknown type: $type"
+              show_help
+              exit 1
+              ;;
+          esac
         '';
         maybeMaturinBuildHook = ''
           set -eu
