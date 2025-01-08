@@ -426,6 +426,7 @@
               export UV_PYTHON_DOWNLOADS=never
               export REPO_ROOT=$(git rev-parse --show-toplevel)
               ${maybeMaturinBuildHook}
+              ${pre-commit-check.shellHook}
             '';
           };
           impure = pkgs.mkShell {

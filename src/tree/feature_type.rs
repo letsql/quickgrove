@@ -83,6 +83,8 @@ impl Serialize for FeatureType {
 
 struct FeatureTypeVisitor;
 
+#[allow(clippy::needless_lifetimes)] // i am not sure why this doesnt work when lifetimes are
+                                     // elided
 impl<'de> Visitor<'de> for FeatureTypeVisitor {
     type Value = FeatureType;
 

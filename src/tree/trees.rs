@@ -114,26 +114,19 @@ impl FeatureTree {
             feature_types,
         }
     }
-
     #[inline(always)]
     pub fn predict(&self, features: &[f32]) -> f32 {
         static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
         let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
 
-        let mut current = match self.tree.get_node(self.tree.get_root_index()) {
-            Some(node) => node,
-            None => return 0.0,
-        };
+        let mut current_idx = self.tree.get_root_index();
+        let nodes = &self.tree.nodes;
 
-        // Prefetch first level
-        if let Some(node) = self.tree.nodes.get(current.left()) {
-            cpu_features.prefetch(node as *const _);
-        }
-        if let Some(node) = self.tree.nodes.get(current.right()) {
-            cpu_features.prefetch(node as *const _);
-        }
+        while let Some(current) = nodes.get(current_idx) {
+            if current.is_leaf() {
+                return current.weight();
+            }
 
-        while !current.is_leaf() {
             let feature_idx = self.feature_offset + current.feature_index() as usize;
             let split_value = features[feature_idx];
 
@@ -143,39 +136,26 @@ impl FeatureTree {
                 split_value >= current.split_value()
             };
 
-            current = if go_right {
-                match self.tree.get_right_child(current) {
-                    Some(node) => {
-                        if !node.is_leaf() {
-                            if let Some(next) = self.tree.nodes.get(node.left()) {
-                                cpu_features.prefetch(next as *const _);
-                            }
-                            if let Some(next) = self.tree.nodes.get(node.right()) {
-                                cpu_features.prefetch(next as *const _);
-                            }
-                        }
-                        node
+            // Get next node indices
+            let left_idx = current.left();
+            let right_idx = current.right();
+
+            // Prefetch grandchildren nodes for better cache utilization
+            if let Some(next_node) = nodes.get(if go_right { right_idx } else { left_idx }) {
+                if !next_node.is_leaf() {
+                    if let Some(grandchild) = nodes.get(next_node.left()) {
+                        cpu_features.prefetch(grandchild as *const _);
                     }
-                    None => break,
-                }
-            } else {
-                match self.tree.get_left_child(current) {
-                    Some(node) => {
-                        if !node.is_leaf() {
-                            if let Some(next) = self.tree.nodes.get(node.left()) {
-                                cpu_features.prefetch(next as *const _);
-                            }
-                            if let Some(next) = self.tree.nodes.get(node.right()) {
-                                cpu_features.prefetch(next as *const _);
-                            }
-                        }
-                        node
+                    if let Some(grandchild) = nodes.get(next_node.right()) {
+                        cpu_features.prefetch(grandchild as *const _);
                     }
-                    None => break,
                 }
-            };
+            }
+
+            current_idx = if go_right { right_idx } else { left_idx };
         }
-        current.weight()
+
+        0.0
     }
 
     pub fn depth(&self) -> usize {
@@ -658,9 +638,6 @@ impl GradientBoostedDecisionTrees {
 
     #[inline]
     fn predict_internal(&self, features: &[Vec<f32>]) -> Result<Float32Array, ArrowError> {
-        static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
-        let cpu_features = CPU_FEATURES.get_or_init(CpuFeatures::new);
-
         let (num_rows, num_features) = (features[0].len(), features.len());
 
         let predictions: Vec<f32> = (0..num_rows)
@@ -673,12 +650,6 @@ impl GradientBoostedDecisionTrees {
                     let mut chunk_scores = vec![self.base_score; row_indices.len()];
 
                     for tree_chunk in self.trees.chunks(self.config.tree_chunk_size) {
-                        if let Some(first_tree) = tree_chunk.first() {
-                            if let Some(root) = first_tree.tree.get_node(0) {
-                                cpu_features.prefetch(root as *const _);
-                            }
-                        }
-
                         for (chunk_idx, &row_idx) in row_indices.iter().enumerate() {
                             // Unroll by 8 for better vectorization
                             let mut j = 0;
