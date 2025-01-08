@@ -1,12 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Serialize)]
-#[repr(u8)]
-pub enum SplitType {
-    Numerical = 0,
-}
-
 pub trait Traversable: Clone {
     type Value;
 
@@ -23,6 +17,12 @@ pub trait Traversable: Clone {
     fn weight(&self) -> f32;
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Serialize)]
+#[repr(u8)]
+pub enum SplitType {
+    Numerical = 0,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SplitData {
     Leaf {
@@ -31,68 +31,119 @@ pub enum SplitData {
     Split {
         split_value: f32,   // 4 bytes
         feature_index: i32, // 4 bytes
-        default_left: bool, // 1 byte
-        split_type: SplitType, // 1 byte
-                            // 2 bytes padding
+        flags: u8,          // 1 byte (contains both default_left and split_type)
     },
-} // Total: 12 bytes, aligned to 4 bytes
+} // Total: 8 bytes aligned
 
 impl SplitData {
-    fn is_leaf(&self) -> bool {
+    const DEFAULT_LEFT_MASK: u8 = 0b1000_0000;
+
+    pub fn new_split(feature_index: i32, split_value: f32, default_left: bool) -> Self {
+        let mut flags = 0u8;
+        if default_left {
+            flags |= Self::DEFAULT_LEFT_MASK;
+        }
+        // currently we only support Numerical type, so we don't need to set any flags for it
+
+        SplitData::Split {
+            feature_index,
+            split_value,
+            flags,
+        }
+    }
+
+    pub fn new_leaf(weight: f32) -> Self {
+        SplitData::Leaf { weight }
+    }
+
+    pub fn is_leaf(&self) -> bool {
         matches!(self, SplitData::Leaf { .. })
     }
 
-    fn weight(&self) -> f32 {
+    pub fn weight(&self) -> f32 {
         match self {
             SplitData::Leaf { weight } => *weight,
             SplitData::Split { .. } => 0.0,
         }
     }
 
-    fn split_value(&self) -> f32 {
+    pub fn split_value(&self) -> f32 {
         match self {
             SplitData::Split { split_value, .. } => *split_value,
             SplitData::Leaf { .. } => 0.0,
         }
     }
 
-    fn feature_index(&self) -> i32 {
+    pub fn feature_index(&self) -> i32 {
         match self {
             SplitData::Split { feature_index, .. } => *feature_index,
             SplitData::Leaf { .. } => -1,
         }
     }
 
-    fn default_left(&self) -> bool {
+    pub fn default_left(&self) -> bool {
         match self {
-            SplitData::Split { default_left, .. } => *default_left,
+            SplitData::Split { flags, .. } => (*flags & Self::DEFAULT_LEFT_MASK) != 0,
             SplitData::Leaf { .. } => false,
         }
     }
 
-    fn split_type(&self) -> SplitType {
+    pub fn split_type(&self) -> SplitType {
         match self {
-            SplitData::Split { split_type, .. } => *split_type,
+            SplitData::Split { .. } => SplitType::Numerical,
             SplitData::Leaf { .. } => SplitType::Numerical,
+        }
+    }
+
+    pub fn set_default_left(&mut self, default_left: bool) {
+        if let SplitData::Split { flags, .. } = self {
+            if default_left {
+                *flags |= Self::DEFAULT_LEFT_MASK;
+            } else {
+                *flags &= !Self::DEFAULT_LEFT_MASK;
+            }
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[repr(C, align(32))]
+#[repr(C, align(16))]
 pub struct TreeNode {
     pub value: SplitData, // 12 bytes
-    pub index: usize,     // 8 bytes
-    pub left: u32,        // 4 bytes
-    pub right: u32,       // 4 bytes
-                          // 4 byte padding
-} // Total: 32 bytes, aligned to 8 bytes
+    pub left: u16,        // 2 bytes
+    pub right: u16,       // 2 bytes
+} // Total: 16 bytes, aligned to 16 bytes
+
+impl TreeNode {
+    pub fn new_split(feature_index: i32, split_value: f32, default_left: bool) -> Self {
+        Self {
+            value: SplitData::new_split(feature_index, split_value, default_left),
+            left: 0,
+            right: 0,
+        }
+    }
+
+    pub fn new_leaf(weight: f32) -> Self {
+        Self {
+            value: SplitData::new_leaf(weight),
+            left: 0,
+            right: 0,
+        }
+    }
+
+    pub fn should_prune_right(&self, threshold: f64) -> bool {
+        threshold <= self.value.split_value().into() && !self.value.default_left()
+    }
+
+    pub fn should_prune_left(&self, threshold: f64) -> bool {
+        threshold >= self.value.split_value().into() && self.value.default_left()
+    }
+}
 
 impl From<SplitData> for TreeNode {
     fn from(node: SplitData) -> Self {
         TreeNode {
             value: node,
-            index: 0,
             left: 0,
             right: 0,
         }
@@ -102,10 +153,9 @@ impl From<SplitData> for TreeNode {
 impl Traversable for TreeNode {
     type Value = SplitData;
 
-    fn new(value: Self::Value, index: usize) -> Self {
-        TreeNode {
+    fn new(value: Self::Value, _index: usize) -> Self {
+        Self {
             value,
-            index,
             left: 0,
             right: 0,
         }
@@ -120,11 +170,11 @@ impl Traversable for TreeNode {
     }
 
     fn set_left(&mut self, index: usize) {
-        self.left = index as u32;
+        self.left = index as u16;
     }
 
     fn set_right(&mut self, index: usize) {
-        self.right = index as u32;
+        self.right = index as u16;
     }
 
     fn is_leaf(&self) -> bool {
@@ -152,37 +202,10 @@ impl Traversable for TreeNode {
     }
 }
 
-impl TreeNode {
-    pub fn new_split(feature_index: i32, split_value: f32, default_left: bool) -> Self {
-        Self::new(
-            SplitData::Split {
-                feature_index,
-                split_value,
-                default_left,
-                split_type: SplitType::Numerical,
-            },
-            0,
-        )
-    }
-
-    pub fn new_leaf(weight: f32) -> Self {
-        Self::new(SplitData::Leaf { weight }, 0)
-    }
-
-    pub fn should_prune_right(&self, threshold: f64) -> bool {
-        threshold <= self.value.split_value().into() && !self.value.default_left()
-    }
-
-    pub fn should_prune_left(&self, threshold: f64) -> bool {
-        threshold >= self.value.split_value().into() && self.value.default_left()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct VecTree<N: Traversable> {
     pub nodes: Vec<N>,
 }
-
 impl<N: Traversable> VecTree<N> {
     pub fn new() -> Self {
         VecTree { nodes: Vec::new() }
@@ -226,15 +249,16 @@ impl<N: Traversable> VecTree<N> {
         index
     }
 
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
     pub fn add_orphan_node(&mut self, value: N) -> usize {
         let idx = self.nodes.len();
         self.nodes.push(value);
         idx
     }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn connect_left(
         &mut self,
         parent_idx: usize,
@@ -283,7 +307,7 @@ impl<N: Traversable> VecTree<N> {
 
         while let Some(idx) = stack.pop() {
             if idx == parent_idx {
-                return true; // Found a cycle
+                return true;
             }
             if visited[idx] {
                 continue;
@@ -293,7 +317,6 @@ impl<N: Traversable> VecTree<N> {
             let node = &self.nodes[idx];
             if !node.is_leaf() {
                 if node.left() != 0 {
-                    // Skip default 0 values
                     stack.push(node.left());
                 }
                 if node.right() != 0 {
@@ -338,6 +361,12 @@ impl<N: Traversable> VecTree<N> {
         }
 
         visited.into_iter().all(|v| v)
+    }
+}
+
+impl<N: Traversable> Default for VecTree<N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -387,11 +416,6 @@ impl<N: Traversable> fmt::Display for VecTree<N> {
     }
 }
 
-impl<N: Traversable> Default for VecTree<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,7 +432,7 @@ mod tests {
             "Alignment of SplitData: {}",
             std::mem::align_of::<SplitData>()
         );
-        assert_eq!(std::mem::size_of::<TreeNode>(), 32);
-        assert_eq!(std::mem::align_of::<TreeNode>(), 32);
+        assert_eq!(std::mem::size_of::<TreeNode>(), 16);
+        assert_eq!(std::mem::align_of::<TreeNode>(), 16);
     }
 }
