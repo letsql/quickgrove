@@ -50,7 +50,7 @@ impl TrustyUDF {
     fn new() -> Result<Self, Box<dyn Error>> {
         let model_data: Value = serde_json::from_str(MODEL_JSON)?;
         let model: GradientBoostedDecisionTrees =
-            GradientBoostedDecisionTrees::load_from_json(&model_data)?;
+            GradientBoostedDecisionTrees::json_loads(&model_data)?;
         let mut arg_types = Vec::new();
         for feature_types in model.feature_types.iter() {
             match feature_types {

@@ -1,10 +1,7 @@
 use arrow::array::{BooleanArray, Float32Array, PrimitiveArray};
 use arrow::datatypes::{DataType, Field, Float32Type, Schema};
 use arrow::record_batch::RecordBatch;
-use serde_json::Value;
 use std::error::Error;
-use std::fs::File;
-use std::io::BufReader;
 use std::sync::Arc;
 use trusty::loader::ModelLoader;
 use trusty::predicates::{Condition, Predicate};
@@ -15,9 +12,8 @@ const MODEL_PATH: &str = "tests/models/reg:squarederror/diamonds_model_trees_100
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Running tree predictions example");
 
-    let model_data = load_model_data(MODEL_PATH)?;
     let batch = create_record_batch()?;
-    let trees = GradientBoostedDecisionTrees::load_from_json(&model_data)?;
+    let trees = GradientBoostedDecisionTrees::json_load(MODEL_PATH)?;
     let predictions: PrimitiveArray<Float32Type> = trees.predict_batches(&[batch.clone()])?;
     println!("Regular tree prediction successful");
 
@@ -35,13 +31,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Pruned predictions: {:}", pruned_predictions.value(0));
 
     Ok(())
-}
-
-fn load_model_data(file_path: &str) -> Result<Value, Box<dyn Error>> {
-    let model_file = File::open(file_path)?;
-    let reader = BufReader::new(model_file);
-    let model_data: Value = serde_json::from_reader(reader)?;
-    Ok(model_data)
 }
 
 fn create_record_batch() -> Result<RecordBatch, Box<dyn Error>> {
