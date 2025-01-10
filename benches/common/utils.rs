@@ -432,6 +432,7 @@ pub mod feature_tree {
             base_score: 0.5,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: (0..feature_count).collect(),
         }
     }
 

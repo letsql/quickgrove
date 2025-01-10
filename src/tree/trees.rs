@@ -136,11 +136,10 @@ impl FeatureTree {
                 split_value >= current.split_value()
             };
 
-            // Get next node indices
             let left_idx = current.left();
             let right_idx = current.right();
 
-            // Prefetch grandchildren nodes for better cache utilization
+            // Prefetch
             if let Some(next_node) = nodes.get(if go_right { right_idx } else { left_idx }) {
                 if !next_node.is_leaf() {
                     if let Some(grandchild) = nodes.get(next_node.left()) {
@@ -563,6 +562,7 @@ pub struct GradientBoostedDecisionTrees {
     pub feature_types: Arc<Vec<FeatureType>>,
     pub objective: Objective,
     pub config: PredictorConfig,
+    pub required_features: HashSet<usize>,
 }
 
 impl Default for GradientBoostedDecisionTrees {
@@ -574,6 +574,7 @@ impl Default for GradientBoostedDecisionTrees {
             base_score: 0.0,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::new(),
         }
     }
 }
@@ -587,20 +588,32 @@ impl GradientBoostedDecisionTrees {
         self.config = config;
     }
 
-    pub fn get_required_features(&self) -> HashSet<usize> {
+    pub fn get_required_features(&self) -> &HashSet<usize> {
+        &self.required_features
+    }
+
+    fn collect_required_features(trees: &[FeatureTree]) -> HashSet<usize> {
         let mut required_features = HashSet::new();
 
-        for tree in &self.trees {
+        for tree in trees {
             if let Some(root) = tree.tree.get_node(tree.tree.get_root_index()) {
-                collect_required_features(
-                    &tree.tree,
-                    root,
-                    tree.feature_offset,
-                    &mut required_features,
-                );
+                let mut stack = vec![root];
+
+                while let Some(node) = stack.pop() {
+                    if !node.is_leaf() {
+                        required_features
+                            .insert(tree.feature_offset + node.feature_index() as usize);
+
+                        if let Some(right) = tree.tree.get_right_child(node) {
+                            stack.push(right);
+                        }
+                        if let Some(left) = tree.tree.get_left_child(node) {
+                            stack.push(left);
+                        }
+                    }
+                }
             }
         }
-
         required_features
     }
 
@@ -612,21 +625,18 @@ impl GradientBoostedDecisionTrees {
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         let mut builder = Float32Builder::with_capacity(total_rows);
 
-        let required_features = self.get_required_features();
-
         for batch in batches {
             let required_columns: Vec<ArrayRef> = batch
                 .columns()
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| required_features.contains(i))
+                .filter(|(i, _)| self.required_features.contains(i))
                 .map(|(_, col)| col.clone())
                 .collect();
 
             let predictions = self.predict_arrays(&required_columns)?;
             builder.append_slice(predictions.values());
         }
-
         Ok(builder.finish())
     }
 
@@ -822,6 +832,7 @@ impl GradientBoostedDecisionTrees {
             base_score: self.base_score,
             objective: self.objective.clone(),
             config: self.config.clone(),
+            required_features: self.required_features.clone(),
         }
     }
 }
@@ -879,6 +890,8 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let required_features = Self::collect_required_features(&trees);
+
         Ok(Self {
             base_score,
             trees,
@@ -886,29 +899,8 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             feature_types: Arc::new(feature_types),
             objective: objective_type,
             config: PredictorConfig::default(),
+            required_features,
         })
-    }
-}
-
-fn collect_required_features(
-    tree: &VecTreeWithTreeNode,
-    root: &TreeNode,
-    feature_offset: usize,
-    features: &mut HashSet<usize>,
-) {
-    let mut stack = vec![root];
-
-    while let Some(node) = stack.pop() {
-        if !node.is_leaf() {
-            features.insert(feature_offset + node.feature_index() as usize);
-
-            if let Some(right) = tree.get_right_child(node) {
-                stack.push(right);
-            }
-            if let Some(left) = tree.get_left_child(node) {
-                stack.push(left);
-            }
-        }
     }
 }
 
@@ -1121,6 +1113,7 @@ mod tests {
             base_score: 0.5,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::from([0, 1]),
         };
 
         let batch = create_sample_record_batch();
@@ -1335,6 +1328,7 @@ mod tests {
             base_score: 0.0,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::from([0, 1, 2]),
         };
 
         let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
@@ -1391,6 +1385,7 @@ mod tests {
             base_score: 0.0,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::from([0, 1]),
         };
 
         let predictions = gbdt.predict_arrays(batch.columns()).unwrap();
@@ -1420,6 +1415,7 @@ mod tests {
             base_score: 0.0,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::from([1, 2]),
         };
 
         let result = gbdt.predict_arrays(batch.columns());
@@ -1486,6 +1482,7 @@ mod tests {
             base_score: 0.0,
             objective: Objective::SquaredError,
             config: PredictorConfig::default(),
+            required_features: HashSet::from([0]),
         };
 
         let required = gbdt.get_required_features();
