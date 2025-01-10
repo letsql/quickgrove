@@ -114,6 +114,7 @@ impl FeatureTree {
             feature_types,
         }
     }
+
     #[inline(always)]
     pub fn predict(&self, features: &[f32]) -> f32 {
         static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
@@ -130,28 +131,23 @@ impl FeatureTree {
             let feature_idx = self.feature_offset + current.feature_index() as usize;
             let split_value = features[feature_idx];
 
+            // prefetch only left child empirically this works bebtter than doing both right
+            // and left child
+            if let Some(left_child) = nodes.get(current.left()) {
+                cpu_features.prefetch(left_child as *const _);
+            }
+
             let go_right = if split_value.is_nan() {
                 !current.default_left()
             } else {
                 split_value >= current.split_value()
             };
 
-            let left_idx = current.left();
-            let right_idx = current.right();
-
-            // Prefetch
-            if let Some(next_node) = nodes.get(if go_right { right_idx } else { left_idx }) {
-                if !next_node.is_leaf() {
-                    if let Some(grandchild) = nodes.get(next_node.left()) {
-                        cpu_features.prefetch(grandchild as *const _);
-                    }
-                    if let Some(grandchild) = nodes.get(next_node.right()) {
-                        cpu_features.prefetch(grandchild as *const _);
-                    }
-                }
-            }
-
-            current_idx = if go_right { right_idx } else { left_idx };
+            current_idx = if go_right {
+                current.right()
+            } else {
+                current.left()
+            };
         }
 
         0.0
