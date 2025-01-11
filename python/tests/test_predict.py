@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-import trusty
+import trustpy
 
-from trusty import Feature
+from trustpy import Feature
 from pathlib import Path
 
 
@@ -15,7 +15,7 @@ def test_predict():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    model = trusty.json_load(
+    model = trustpy.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()
@@ -33,7 +33,7 @@ def test_pruning():
         TEST_DIR
         / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     ).query("carat <0.2")
-    model = trusty.json_load(
+    model = trustpy.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     batch = pa.RecordBatch.from_pandas(df)
@@ -47,7 +47,7 @@ def test_pruning():
     )
 
 def test_tree_info():
-    model = trusty.json_load(
+    model = trustpy.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     tree = model.tree_info(0)
@@ -71,7 +71,7 @@ def test_prediction_chunking():
     df = pd.read_csv(
         TEST_DIR / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    model = trusty.json_load(
+    model = trustpy.json_load(
         TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()

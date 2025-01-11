@@ -1,5 +1,5 @@
 [workspace]
-members = [".","trusty-examples"]
+members = [".", "trusty-examples"]
 
 [package]
 name = "trusty"
@@ -11,7 +11,7 @@ name = "trusty"
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.maturin]
-name = "trusty"
+name = "trustpy"
 python-source = "python"
 
 [dependencies]

@@ -1,6 +1,10 @@
+[build-system]
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
+
 [project]
-name = "trusty"
-version = "0.1.0"
+name = "trustpy"
+dynamic = ["version"]
 description = ""
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,50 +16,26 @@ dependencies = [
     "maturin>=1.7.8",
     "pandas>=2.2.3",
     "pyarrow==17.0.0",
-    "pytest-benchmark>=5.1.0",
-    "pytest>=8.3.4",
     "pythran>=0.17.0 ; sys_platform == 'darwin'",
     "requests>=2.32.3",
     "scikit-learn>=1.5.2",
     "xgboost>=2.1.1",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+    "pytest-benchmark>=5.1.0",
+    "pytest>=8.3.4",
     "ipython>=8.31.0",
 ]
 
-[tool.poetry]
-name = "app"
-version = "0.1.0"
-description = ""
-authors = ["hussainsultan <hussainz@gmail.com>"]
-readme = "README.md"
+[project.scripts]
+generate-examples = "trustpy.generate_examples:main"
 
-[tool.poetry.dependencies]
-python = "^3.10"
-xgboost = "^2.1.1"
-pandas = "^2.2.3"
-ipython = "^8.28.0"
-scikit-learn = "^1.5.2"
-attrs = "^24.2.0"
-pyarrow = "17.0.0"
-maturin = "^1.7.8"
-pytest = "^8.3.4"
-pytest-benchmark = "^5.1.0"
-
-requests = "^2.32.3"
 [tool.maturin]
 python-source = "python"
-module-name = "trusty._internal"
+module-name = "trustpy._internal"
 features = ["pyo3/extension-module"]
-
-[tool.poetry.scripts]
-generate-examples = "app.generate_examples:main"
-
-[build-system]
-requires = ["maturin>=1.2,<2.0"]
-build-backend = "maturin"
 
 [tool.ruff]
 line-length = 88

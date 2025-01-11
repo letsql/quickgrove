@@ -747,7 +747,7 @@ wheels = [
 ]
 
 [[package]]
-name = "trusty"
+name = "trustpy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -755,8 +755,6 @@ dependencies = [
     { name = "maturin" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
     { name = "pythran", marker = "sys_platform == 'darwin'" },
     { name = "requests" },
     { name = "scikit-learn" },
@@ -768,6 +766,13 @@ dev = [
     { name = "ipython" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipython" },
+    { name = "pytest" },
+    { name = "pytest-benchmark" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "attrs", specifier = ">=24.2.0" },
@@ -775,12 +780,17 @@ requires-dist = [
     { name = "maturin", specifier = ">=1.7.8" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pyarrow", specifier = "==17.0.0" },
-    { name = "pytest", specifier = ">=8.3.4" },
-    { name = "pytest-benchmark", specifier = ">=5.1.0" },
     { name = "pythran", marker = "sys_platform == 'darwin'", specifier = ">=0.17.0" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "scikit-learn", specifier = ">=1.5.2" },
     { name = "xgboost", specifier = ">=2.1.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ipython", specifier = ">=8.31.0" },
+    { name = "pytest", specifier = ">=8.3.4" },
+    { name = "pytest-benchmark", specifier = ">=5.1.0" },
 ]
 
 [[package]]
