@@ -699,6 +699,24 @@ wheels = [
 ]
 
 [[package]]
+name = "tl2cgen"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "scipy" },
+    { name = "treelite" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/f4/119d4df8ed975a37688d6f5a705f20c46e0b4b253143e183e1ee8baa8f27/tl2cgen-1.0.0.tar.gz", hash = "sha256:c4db8d404388f562b6b9420bb08fc1b735c0b14c695722c40d9d6d8f1543eef3", size = 64324 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/a3/a44a8232a9d24cb4f5feb41ed535144fcdb77cd9b334b54da2430f579d61/tl2cgen-1.0.0-py3-none-macosx_10_15_x86_64.macosx_11_0_x86_64.macosx_12_0_x86_64.whl", hash = "sha256:0d1ef581e58c8ea9e9ab69e7650a09bc4deb01a561bf6e82e3b30fe36c2efe9c", size = 534710 },
+    { url = "https://files.pythonhosted.org/packages/2e/8d/d7fc38634353c2b5c94e25793db968a7d7d431d5916f3e31490af9ce9150/tl2cgen-1.0.0-py3-none-macosx_12_0_arm64.whl", hash = "sha256:119cd5fa61ac02607de5ab15e173dbce8f7b140fa53945238b016b4ef3a3fa6d", size = 471123 },
+    { url = "https://files.pythonhosted.org/packages/fd/18/a69563a5b97ce982ef30ad4225f82840e34f26bb2f86622f09b6d4fa5696/tl2cgen-1.0.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b81c760bd3924c4d8dcb2073c3c9f178905582aeabae27bbf19f49d4fa9e4da1", size = 774824 },
+    { url = "https://files.pythonhosted.org/packages/41/d5/32304f21e3691e3a65ce4cf6b77c71e6e474d5a09cfc3306b2a84a67170b/tl2cgen-1.0.0-py3-none-win_amd64.whl", hash = "sha256:11b49aff22d0c2722c5c6fbedb98d87502768bb3e6effd406abe69c5dc34b182", size = 385199 },
+]
+
+[[package]]
 name = "tomli"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -747,6 +765,24 @@ wheels = [
 ]
 
 [[package]]
+name = "treelite"
+version = "4.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/46/9e4ff3f11f04d31eb8b9bef1eb3b140d7ce272bbeb6ea1804c5ea7ea3299/treelite-4.4.1.tar.gz", hash = "sha256:de9c28ff481317d9f4286ea781ba404e2506caa6995cdcb1867a7036124263de", size = 109293 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/66/64850a5ec924a14e9517daaa21eb081a5883bb01ef16ffe3e08fda24d43f/treelite-4.4.1-py3-none-macosx_10_15_x86_64.macosx_11_0_x86_64.macosx_12_0_x86_64.whl", hash = "sha256:876ecdbb20783c2f7cfa483996bcc450db6b931184cc1bf22bad28d7f069bfe7", size = 733602 },
+    { url = "https://files.pythonhosted.org/packages/19/e2/1d7ae9bd1eabe68e237ebd394ef673b9f39172f352a1b9bb3befeddeee59/treelite-4.4.1-py3-none-macosx_12_0_arm64.whl", hash = "sha256:1473d7bb3e1e0eb525265a38cacb3f01e4c2136a1c85f40b512316b5776eb97f", size = 631437 },
+    { url = "https://files.pythonhosted.org/packages/aa/6d/0def3f702f0d3a10f4ba9b161bed68551094fc6dda0a89e61a40ea2425c5/treelite-4.4.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:ffc80da72201399ebe48944d231083cf190918297c37fd43814bb9635890cebc", size = 904552 },
+    { url = "https://files.pythonhosted.org/packages/16/4c/9cfa4cfac89944066bcc042546782235544f5427a257c1f5bfd1700b0838/treelite-4.4.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b3299e6c3bc3afa51641b651d8c3b2084ceec44d1913de89bfa7e98d4caf7607", size = 922796 },
+    { url = "https://files.pythonhosted.org/packages/8f/d2/9b7467b797493b06cc66b44a37053894b94af6ad2fbad1f6f4879b14213f/treelite-4.4.1-py3-none-win_amd64.whl", hash = "sha256:77b5c9b7f80fdab2efa43b4ace2fb76d61d584f7af7373c406dea95c230464f9", size = 502713 },
+]
+
+[[package]]
 name = "trusty"
 version = "0.1.0"
 source = { editable = "." }
@@ -760,6 +796,8 @@ dependencies = [
     { name = "pythran", marker = "sys_platform == 'darwin'" },
     { name = "requests" },
     { name = "scikit-learn" },
+    { name = "tl2cgen" },
+    { name = "treelite" },
     { name = "xgboost" },
 ]
 
@@ -780,6 +818,8 @@ requires-dist = [
     { name = "pythran", marker = "sys_platform == 'darwin'", specifier = ">=0.17.0" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "scikit-learn", specifier = ">=1.5.2" },
+    { name = "tl2cgen", specifier = ">=1.0.0" },
+    { name = "treelite", specifier = ">=4.4.1" },
     { name = "xgboost", specifier = ">=2.1.1" },
 ]
 
@@ -825,7 +865,7 @@ version = "2.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and platform_system == 'Linux'" },
+    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/48/b0/131ffc4a15fd3acee9be3a7baa6b2fa6faa479799c51b880de9fc3ddf550/xgboost-2.1.3.tar.gz", hash = "sha256:7699ec4226156887d3afc665c63ab87469db9d46e361c702ba9fccd22535730c", size = 1090326 }
