@@ -162,7 +162,7 @@ class OutputPaths:
     def data_path(self) -> Path:
         return (
             self.output_base_dir
-            / self.objective_name
+            / self.objective_name.replace(":", "_")
             / "data"
             / f"{self.dataset_name}_data_{self.data_suffix}.csv"
         )
@@ -173,7 +173,7 @@ class OutputPaths:
             raise ValueError("num_trees must be set for model path")
         return (
             self.output_base_dir
-            / self.objective_name
+            / self.objective_name.replace(":", "_")
             / "models"
             / f"{self.dataset_name}_model_{self.model_suffix}.json"
         )
@@ -184,7 +184,7 @@ class OutputPaths:
             raise ValueError("num_trees must be set for metadata path")
         return (
             self.output_base_dir
-            / self.objective_name
+            / self.objective_name.replace(":", "_")
             / "models"
             / f"{self.dataset_name}_metadata_{self.model_suffix}.json"
         )
@@ -200,19 +200,16 @@ class DataProcessor(ABC):
 
     @abstractmethod
     def load_data(self) -> pd.DataFrame:
-        """Load raw data from source."""
         pass
 
     @abstractmethod
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess the raw data."""
         pass
 
     @abstractmethod
     def get_feature_target_split(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, pd.Series]:
-        """Split data into features and target."""
         pass
 
     def enforce_float64(self, df: pd.DataFrame) -> pd.DataFrame:
