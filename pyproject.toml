@@ -12,14 +12,7 @@ authors = [
     { name = "Hussain Sultan", email = "hussain@letsql.com" },
 ]
 dependencies = [
-    "attrs>=24.2.0",
-    "maturin>=1.7.8",
-    "pandas>=2.2.3",
-    "pyarrow==17.0.0",
-    "pythran>=0.17.0 ; sys_platform == 'darwin'",
-    "requests>=2.32.3",
-    "scikit-learn>=1.5.2",
-    "xgboost>=2.1.1",
+    "pyarrow>=17.0.0",
 ]
 
 [dependency-groups]
@@ -27,10 +20,21 @@ dev = [
     "pytest-benchmark>=5.1.0",
     "pytest>=8.3.4",
     "ipython>=8.31.0",
+    "maturin>=1.8.0",
+    "attrs>=24.3.0",
 ]
 
 [project.scripts]
 generate-examples = "trustpy.generate_examples:main"
+
+[project.optional-dependencies]
+examples = [
+    "pandas>=2.2.3",
+    "pythran>=0.17.0",
+    "requests>=2.32.3",
+    "scikit-learn>=1.6.0",
+    "xgboost>=2.1.3",
+]
 
 [tool.maturin]
 python-source = "python"
