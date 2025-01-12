@@ -3,7 +3,7 @@
 result
 target
 *.so
-data
+./data
 .envrc.*
 .pre-commit-config.yaml
 .idea
