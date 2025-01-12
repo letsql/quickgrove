@@ -311,11 +311,11 @@ wheels = [
 
 [[package]]
 name = "nvidia-nccl-cu12"
-version = "2.23.4"
+version = "2.24.3"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/3a/0112397396dec37ffc8edd7836d48261b4d14ca60ec8ed7bc857cce1d916/nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_aarch64.whl", hash = "sha256:aa946c8327e22ced28e7cef508a334673abc42064ec85f02d005ba1785ea4cec", size = 198953892 },
-    { url = "https://files.pythonhosted.org/packages/ed/1f/6482380ec8dcec4894e7503490fc536d846b0d59694acad9cf99f27d0e7d/nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b097258d9aab2fa9f686e33c6fe40ae57b27df60cedbd15d139701bb5509e0c1", size = 198954603 },
+    { url = "https://files.pythonhosted.org/packages/de/90/6a3ff7d864c134a6515822626f35ae08c64aabe7026de7c146a4c34653b4/nvidia_nccl_cu12-2.24.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ac876961433514a2943ba238f390fa28616fd8252906127e28e9714eda355d09", size = 204288254 },
+    { url = "https://files.pythonhosted.org/packages/fe/9b/f2e37edaf53d722b79697eb4402bcd5354d45da90e2eb667b3e4be0c642b/nvidia_nccl_cu12-2.24.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e5c5167351e8936b96ddad8ac6f687199e22d09db07cf08af9457a123b34cac0", size = 201266889 },
 ]
 
 [[package]]
@@ -747,40 +747,48 @@ wheels = [
 ]
 
 [[package]]
-name = "trusty"
+name = "trustpy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "attrs" },
-    { name = "maturin" },
-    { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
-    { name = "pythran", marker = "sys_platform == 'darwin'" },
+]
+
+[package.optional-dependencies]
+examples = [
+    { name = "pandas" },
+    { name = "pythran" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "xgboost" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
+    { name = "attrs" },
     { name = "ipython" },
+    { name = "maturin" },
+    { name = "pytest" },
+    { name = "pytest-benchmark" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "attrs", specifier = ">=24.2.0" },
-    { name = "ipython", marker = "extra == 'dev'", specifier = ">=8.31.0" },
-    { name = "maturin", specifier = ">=1.7.8" },
-    { name = "pandas", specifier = ">=2.2.3" },
-    { name = "pyarrow", specifier = "==17.0.0" },
+    { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.2.3" },
+    { name = "pyarrow", specifier = ">=17.0.0" },
+    { name = "pythran", marker = "extra == 'examples'", specifier = ">=0.17.0" },
+    { name = "requests", marker = "extra == 'examples'", specifier = ">=2.32.3" },
+    { name = "scikit-learn", marker = "extra == 'examples'", specifier = ">=1.6.0" },
+    { name = "xgboost", marker = "extra == 'examples'", specifier = ">=2.1.3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "attrs", specifier = ">=24.3.0" },
+    { name = "ipython", specifier = ">=8.31.0" },
+    { name = "maturin", specifier = ">=1.8.0" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytest-benchmark", specifier = ">=5.1.0" },
-    { name = "pythran", marker = "sys_platform == 'darwin'", specifier = ">=0.17.0" },
-    { name = "requests", specifier = ">=2.32.3" },
-    { name = "scikit-learn", specifier = ">=1.5.2" },
-    { name = "xgboost", specifier = ">=2.1.1" },
 ]
 
 [[package]]
