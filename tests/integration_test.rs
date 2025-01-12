@@ -14,9 +14,9 @@ mod tests {
         let tester = ModelTester::new(epsilon);
 
         let trees = tester
-            .load_model("tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json")?;
+            .load_model("tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json")?;
         let (preprocessed_batches, expected_results) = tester.load_dataset(
-            "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv",
+            "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv",
             1024,
             DatasetType::Diamonds,
         )?;
@@ -42,13 +42,13 @@ mod tests {
         let tester = ModelTester::new(epsilon);
 
         let trees = tester
-            .load_model("tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json")?;
+            .load_model("tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json")?;
         let mut predicate = Predicate::new();
         predicate.add_condition("carat".to_string(), Condition::LessThan(0.30));
         let pruned_trees = trees.prune(&predicate);
 
         let (preprocessed_batches, expected_results) = tester.load_dataset(
-            "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv",
+            "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv",
             100,
             DatasetType::Diamonds,
         )?;
@@ -71,10 +71,10 @@ mod tests {
         let tester = ModelTester::new(epsilon);
 
         let trees = tester.load_model(
-            "tests/models/reg:squarederror/airline_satisfaction_model_trees_100_mixed.json",
+            "tests/models/reg_squarederror/airline_satisfaction_model_trees_100_mixed.json",
         )?;
         let (preprocessed_batches, expected_results) = tester.load_dataset(
-            "tests/data/reg:squarederror/airline_satisfaction_data_filtered_trees_100_mixed.csv",
+            "tests/data/reg_squarederror/airline_satisfaction_data_filtered_trees_100_mixed.csv",
             1024,
             DatasetType::Airline,
         )?;
@@ -100,9 +100,9 @@ mod tests {
         let tester = ModelTester::new(epsilon);
 
         let trees =
-            tester.load_model("tests/models/reg:logistic/diamonds_model_trees_100_mixed.json")?;
+            tester.load_model("tests/models/reg_logistic/diamonds_model_trees_100_mixed.json")?;
         let (preprocessed_batches, expected_results) = tester.load_dataset(
-            "tests/data/reg:logistic/diamonds_data_filtered_trees_100_mixed.csv",
+            "tests/data/reg_logistic/diamonds_data_filtered_trees_100_mixed.csv",
             1024,
             DatasetType::Diamonds,
         )?;
@@ -128,9 +128,9 @@ mod tests {
         let tester = ModelTester::new(epsilon);
 
         let trees = tester
-            .load_model("tests/models/binary:logistic/diamonds_model_trees_100_mixed.json")?;
+            .load_model("tests/models/binary_logistic/diamonds_model_trees_100_mixed.json")?;
         let (preprocessed_batches, expected_results) = tester.load_dataset(
-            "tests/data/binary:logistic/diamonds_data_filtered_trees_100_mixed.csv",
+            "tests/data/binary_logistic/diamonds_data_filtered_trees_100_mixed.csv",
             1024,
             DatasetType::Diamonds,
         )?;
