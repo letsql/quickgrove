@@ -13,10 +13,10 @@ TEST_DIR = Path(__file__).parent.parent.parent # ../../
 def test_predict():
     df = pd.read_csv(
         TEST_DIR
-        / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
+        / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
     model = trustpy.json_load(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+        TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()
     df = df.drop(["target", "prediction"], axis=1)
@@ -31,10 +31,10 @@ def test_predict():
 def test_pruning():
     df = pd.read_csv(
         TEST_DIR
-        / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
+        / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     ).query("carat <0.2")
     model = trustpy.json_load(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+        TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     batch = pa.RecordBatch.from_pandas(df)
     predicates = [Feature("carat") < 0.2]
@@ -48,7 +48,7 @@ def test_pruning():
 
 def test_tree_info():
     model = trustpy.json_load(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+        TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     tree = model.tree_info(0)
     assert isinstance(str(tree), str)
@@ -69,10 +69,10 @@ def test_tree_info():
 
 def test_prediction_chunking():
     df = pd.read_csv(
-        TEST_DIR / "tests/data/reg:squarederror/diamonds_data_filtered_trees_100_mixed.csv"
+        TEST_DIR / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
     model = trustpy.json_load(
-        TEST_DIR / "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json"
+        TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()
     df = df.drop(["target", "prediction"], axis=1)
