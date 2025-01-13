@@ -67,7 +67,7 @@ fn predict_batch_with_gbdt(model: &GBDT, batches: &[RecordBatch]) -> Result<Floa
 fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
     let trees =
-        load_model("data/benches/reg:squarederror/models/diamonds_model_trees_100_mixed.json")?;
+        load_model("data/benches/reg_squarederror/models/diamonds_model_trees_100_mixed.json")?;
     let (data_batches, _) = data_loader::load_diamonds_dataset(
         "data/benches/reg:squarederror/data/diamonds_data_full_trees_100_mixed.csv",
         BATCHSIZE,
@@ -115,10 +115,10 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
 fn benchmark_airline_prediction(c: &mut Criterion) -> Result<()> {
     let rt = Runtime::new()?;
     let trees = load_model(
-        "data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_mixed.json",
+        "data/benches/reg_squarederror/models/airline_satisfaction_model_trees_1000_mixed.json",
     )?;
     let (data_batches, _) = data_loader::load_airline_dataset(
-        "data/benches/reg:squarederror/data/airline_satisfaction_data_filtered_trees_1000_mixed.csv",
+        "data/benches/reg_squarederror/data/airline_satisfaction_data_filtered_trees_1000_mixed.csv",
         BATCHSIZE,
         false,
     )?;
@@ -153,11 +153,11 @@ fn benchmark_implementations(c: &mut Criterion) {
 
     {
         let trees = load_model(
-            "data/benches/reg:squarederror/models/diamonds_model_trees_100_float64.json",
+            "data/benches/reg_squarederror/models/diamonds_model_trees_100_float64.json",
         )
         .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "data/benches/reg:squarederror/data/diamonds_data_full_trees_100_float64.csv",
+            "data/benches/reg_squarederror/data/diamonds_data_full_trees_100_float64.csv",
             BATCHSIZE,
             true,
         )
@@ -180,10 +180,10 @@ fn benchmark_implementations(c: &mut Criterion) {
         });
     }
     {
-        let trees = load_model("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
+        let trees = load_model("data/benches/reg_squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
             .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_airline_dataset(
-            "data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_1000_float64.csv",
+            "data/benches/reg_squarederror/data/airline_satisfaction_data_full_trees_1000_float64.csv",
             BATCHSIZE,
             true,
         )
@@ -207,10 +207,10 @@ fn benchmark_implementations(c: &mut Criterion) {
     }
 
     {
-        let model = GBDT::from_xgboost_json_used_feature("data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
+        let model = GBDT::from_xgboost_json_used_feature("data/benches/reg_squarederror/models/airline_satisfaction_model_trees_1000_float64.json")
             .expect("Failed to load airline model");
         let (batches, _) = data_loader::load_airline_dataset(
-            "data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_1000_float64.csv",
+            "data/benches/reg_squarederror/data/airline_satisfaction_data_full_trees_1000_float64.csv",
             BATCHSIZE,
             true,
         )
@@ -235,11 +235,11 @@ fn benchmark_implementations(c: &mut Criterion) {
 
     {
         let model = GBDT::from_xgboost_json_used_feature(
-            "data/benches/reg:squarederror/models/diamonds_model_trees_100_float64.json",
+            "data/benches/reg_squarederror/models/diamonds_model_trees_100_float64.json",
         )
         .expect("Failed to load diamonds model");
         let (batches, _) = data_loader::load_diamonds_dataset(
-            "data/benches/reg:squarederror/data/diamonds_data_full_trees_100_float64.csv",
+            "data/benches/reg_squarederror/data/diamonds_data_full_trees_100_float64.csv",
             BATCHSIZE,
             true,
         )
