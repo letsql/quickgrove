@@ -750,9 +750,6 @@ wheels = [
 name = "trustpy"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "pyarrow" },
-]
 
 [package.optional-dependencies]
 examples = [
@@ -776,7 +773,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.2.3" },
-    { name = "pyarrow", specifier = ">=17.0.0" },
     { name = "pyarrow", marker = "extra == 'examples'", specifier = ">=17.0.0" },
     { name = "pythran", marker = "extra == 'examples'", specifier = ">=0.17.0" },
     { name = "requests", marker = "extra == 'examples'", specifier = ">=2.32.3" },
