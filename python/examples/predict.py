@@ -13,8 +13,8 @@ def read_github_raw_file(url):
         raise Exception(f"Failed to fetch file: {response.status_code}")
 
 
-MODEL_RAW_GITHUB_URL = "https://raw.githubusercontent.com/letsql/trusty/refs/heads/main/tests/models/binary%3Alogistic/diamonds_model_trees_100_mixed.json"
-DATA_RAW_GITHUB_URL = "https://raw.githubusercontent.com/letsql/trusty/refs/heads/main/tests/data/binary%3Alogistic/diamonds_data_filtered_trees_100_mixed.csv"
+MODEL_RAW_GITHUB_URL = "https://raw.githubusercontent.com/letsql/trusty/refs/heads/main/tests/models/binary_logistic/diamonds_model_trees_100_mixed.json"
+DATA_RAW_GITHUB_URL = "https://raw.githubusercontent.com/letsql/trusty/refs/heads/main/tests/data/binary_logistic/diamonds_data_filtered_trees_100_mixed.csv"
 
 df = pd.read_csv(DATA_RAW_GITHUB_URL)
 
