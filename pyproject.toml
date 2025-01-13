@@ -30,6 +30,7 @@ generate-examples = "trustpy.generate_examples:main"
 [project.optional-dependencies]
 examples = [
     "pandas>=2.2.3",
+    "pyarrow>=17.0.0",
     "pythran>=0.17.0",
     "requests>=2.32.3",
     "scikit-learn>=1.6.0",
