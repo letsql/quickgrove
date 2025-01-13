@@ -1,72 +1,155 @@
-# Trusty: XGBoost Model Inference Engine in 🦀 
+# Trusty
 
-A zero-copy, Arrow-native inference engine for tree-based models, designed for seamless integration into high-performance Rust data pipelines. Trusty leverages Arrow's columnar memory format to deliver efficient batch predictions while maintaining type safety.
+Trusty is a high-performance Rust library with Python bindings (`trustpy`) library for loading and running pre-trained XGBoost models. Built with Rust and Python bindings, it provides efficient model inference with native Apache Arrow integration and is designed for being used in Database UDFs (see `trusty-examples/datafusion_udf.rs`). 
 
-> ⚠️ **DEVELOPMENT STATUS** ⚠️
-> 
-> This project is in active development. APIs are subject to change.
-> Not ready for use in production.
+## Key Features
 
-## Core Features
+- **Dynamic XGBoost Model Loading**: Load pre-trained XGBoost models without recompilation
+- **Apache Arrow Integration**: Native support for Arrow RecordBatches for efficient inference
+- **Tree Pruning**: Dynamic tree modification capabilities with predicate-based pruning
+- **High Performance**: Rust-powered inference with hardware prefetching and efficient Tree Node data structure
+- **Memory Efficiency**: Configurable batch processing with tree and row chunking
 
-- **Zero-Copy Inference**: Direct operations on Arrow columnar buffers
-- **Model Pruning**: Runtime optimization via predicate-based tree pruning
-- **Batched Trees**: Efficient processing with large tree batching (>100)
-- **Mixed Types**: Support Boolean, Int64 and Float64 data types along with missing values
-- **Model IO**: XGBoost Json Schema support for model loading
+## Quick Start
 
-## Installation
-We do not have a release as a cargo package yet. To follow along development, we recommend using the nix flake.
+```python
+import trustpy
+import pandas as pd
+import pyarrow as pa
+from trustpy import Feature
 
+# Load a pre-trained XGBoost model
+model = trustpy.json_load("model.json")
+
+# Convert pandas DataFrame to Arrow RecordBatch
+df = pd.read_csv("data.csv")
+batch = pa.RecordBatch.from_pandas(df)
+
+# Make predictions
+predictions = model.predict_batches([batch])
+
+# Inspect model structure
+print(model)
+>>> Total number of trees: 100
+>>> Average tree depth: 7.00
+>>> Max tree depth: 7
+>>> Total number of nodes: 9546
+
+# Inspect individual trees
+print(model.tree_info(0))
 ```
-nix develop
-```
 
-## Usage Examples
+### Rust Usage
 
-### Basic Inference Pipeline
+If you prefer to use the core Rust library directly:
 
 ```rust
+use trusty::{
+    GradientBoostedDecisionTrees,
+    PredictorConfig,
+    Feature,
+    Predicate,
+    Condition,
+};
 use arrow::record_batch::RecordBatch;
-use trusty::{GradientBoostedDecisionTrees, Predicate, Condition};
+use std::collections::HashMap;
 
-let model_json = std::fs::read_to_string("model.json")?;
-let model_data: serde_json::Value = serde_json::from_str(&model_json)?;
-let model = GradientBoostedDecisionTrees::load(&model_data)?;
-
-let predictions = model.predict_batch(&batch)?;
-
-
-model.print_tree_info();
+fn main() -> Result<(), Box<dyn Error>> {
+    // Load model from JSON file
+    let model = GradientBoostedDecisionTrees::json_load("model.json")?;
+    
+    // Configure prediction parameters
+    model.set_config(PredictorConfig {
+        row_chunk_size: 64,     // Process 64 rows at a time
+        tree_chunk_size: 8      // Process 8 trees at a time
+    });
+    
+    // Create predicate for pruning
+    let mut predicate = Predicate::new();
+    predicate.add_condition(
+        "carat".to_string(), 
+        Condition::LessThan(0.2)
+    );
+    
+    // Prune the model
+    let pruned_model = model.prune(&predicate);
+    
+    // Make predictions on Arrow RecordBatch
+    let predictions = pruned_model.predict_batches(&[batch])?;
+    
+    // Get model insights
+    println!("Number of trees: {}", pruned_model.num_trees());
+    println!("Tree depths: {:?}", pruned_model.tree_depths());
+    println!("Required features: {:?}", pruned_model.get_required_features());
+    
+    Ok(())
+}
 ```
 
-### Example Execution
+#### Cargo.toml
 
-Using Nix flake:
-
-```bash
-# Run DataFusion UDF integration example
-nix run .#datafusion-udf-example
-
-# Run single prediction pipeline example
-nix run .#single-prediction-example
+```toml
+[dependencies]
+trustpy = { git = "https://github.com/letsql/trusty" }
 ```
 
-### Advanced Features
+## Tree Pruning
 
-#### Predicate-based Tree Pruning
+```python
+# Create pruning predicates
+predicates = [Feature("carat") < 0.2]  # Remove paths where carat >= 0.2
 
-```rust
-let mut predicate = Predicate::new();
-predicate.add_condition("feature0".to_string(), Condition::LessThan(0.5));
-let pruned_model = model.prune(&predicate);
+# Prune model
+pruned_model = model.prune(predicates)
+
+# Make predictions with pruned model
+predictions = pruned_model.predict_batches([batch])
 ```
 
-#### Model Introspection
-```rust
-// Detailed tree structure visualization
-println!("{}", tree);
+## Performance Configuration
+
+```python
+# Configure batch processing
+model.set_config({
+    'row_chunk_size': 64,    # Process 64 rows at a time
+    'tree_chunk_size': 8     # Process 8 trees at a time
+})
+
+# Memory-efficient prediction for large datasets
+for batch in pa.RecordBatchStreamReader('large_dataset.arrow'):
+    predictions = model.predict_batches([batch])
 ```
+
+
+## Model Inspection
+
+```python
+# View model statistics
+print(model.tree_depths())    # Depths of all trees
+print(model.num_nodes())      # Total number of nodes
+
+# Inspect specific trees
+tree = model.tree_info(1)     # Get detailed view of second tree
+```
+
+## Under the Hood
+
+Trustpy uses Rust for its core functionality, providing:
+- Fast model loading and inference
+- Schema validation with column names for batches
+- Efficient memory management
+- Native Arrow integration
+- SIMD operations where applicable
+- Configurable batch processing
+
+## Data Type Support
+
+Supports XGBoost models with features of type:
+- `Float32/Float64`: For continuous features
+- `Int64`: For integer features
+- `Boolean`: For binary indicators
+
+All numeric features are internally processed as `Float32` for optimal performance.
 
 ## Development Roadmap
 
@@ -79,6 +162,7 @@ println!("{}", tree);
   - [ ] pairwise
   - [ ] ndcg
   - [ ] map
+- Support categorical feature type
 - [ ] LightGBM integration
 - [ ] CatBoost integration
 
