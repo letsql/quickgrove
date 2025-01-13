@@ -757,6 +757,7 @@ dependencies = [
 [package.optional-dependencies]
 examples = [
     { name = "pandas" },
+    { name = "pyarrow" },
     { name = "pythran" },
     { name = "requests" },
     { name = "scikit-learn" },
@@ -776,6 +777,7 @@ dev = [
 requires-dist = [
     { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.2.3" },
     { name = "pyarrow", specifier = ">=17.0.0" },
+    { name = "pyarrow", marker = "extra == 'examples'", specifier = ">=17.0.0" },
     { name = "pythran", marker = "extra == 'examples'", specifier = ">=0.17.0" },
     { name = "requests", marker = "extra == 'examples'", specifier = ">=2.32.3" },
     { name = "scikit-learn", marker = "extra == 'examples'", specifier = ">=1.6.0" },
