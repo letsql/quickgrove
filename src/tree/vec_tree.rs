@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 pub trait Traversable: Clone {
@@ -9,6 +10,7 @@ pub trait Traversable: Clone {
     fn right(&self) -> usize;
     fn set_left(&mut self, index: usize);
     fn set_right(&mut self, index: usize);
+    fn set_feature_index(&mut self, index: i32);
     fn is_leaf(&self) -> bool;
     fn default_left(&self) -> bool;
     fn feature_index(&self) -> i32;
@@ -123,6 +125,12 @@ impl TreeNode {
         }
     }
 
+    // fn set_feature_index(&mut self, index: i32) {
+    //     if let SplitData::Split { feature_index, .. } = &mut self.value {
+    //         *feature_index = index;
+    //     }
+    // }
+
     pub fn new_leaf(weight: f32) -> Self {
         Self {
             value: SplitData::new_leaf(weight),
@@ -199,6 +207,12 @@ impl Traversable for TreeNode {
 
     fn weight(&self) -> f32 {
         self.value.weight()
+    }
+
+    fn set_feature_index(&mut self, index: i32) {
+        if let SplitData::Split { feature_index, .. } = &mut self.value {
+            *feature_index = index;
+        }
     }
 }
 
@@ -361,6 +375,17 @@ impl<N: Traversable> VecTree<N> {
         }
 
         visited.into_iter().all(|v| v)
+    }
+
+    pub fn update_feature_indices(&mut self, feature_index_map: &HashMap<usize, usize>) {
+        for node in &mut self.nodes {
+            if !node.is_leaf() {
+                let old_index = node.feature_index() as usize;
+                if let Some(&new_index) = feature_index_map.get(&old_index) {
+                    node.set_feature_index(new_index as i32);
+                }
+            }
+        }
     }
 }
 

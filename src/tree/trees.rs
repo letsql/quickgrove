@@ -317,6 +317,18 @@ impl FeatureTree {
         Some(new_tree)
     }
 
+    fn update_feature_metadata(
+        &mut self,
+        new_feature_names: Arc<Vec<String>>,
+        new_feature_types: Arc<Vec<FeatureType>>,
+        feature_index_map: &HashMap<usize, usize>,
+    ) {
+        self.feature_names = new_feature_names;
+        self.feature_types = new_feature_types;
+        self.tree.update_feature_indices(feature_index_map);
+        self.feature_offset = 0;
+    }
+
     pub fn builder() -> FeatureTreeBuilder {
         FeatureTreeBuilder::new()
     }
@@ -615,7 +627,14 @@ impl GradientBoostedDecisionTrees {
 
     pub fn predict_batches(&self, batches: &[RecordBatch]) -> Result<Float32Array, ArrowError> {
         if batches.len() == 1 {
-            return self.predict_arrays(batches[0].columns());
+            let required_columns: Vec<ArrayRef> = batches[0]
+                .columns()
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| self.required_features.contains(i))
+                .map(|(_, col)| col.clone())
+                .collect();
+            return self.predict_arrays(&required_columns);
         }
 
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
@@ -707,9 +726,9 @@ impl GradientBoostedDecisionTrees {
         let num_rows = feature_arrays[0].len();
         let mut feature_values = Vec::with_capacity(feature_arrays.len());
 
-        for (array, feature_type) in feature_arrays.iter().zip(self.feature_types.iter()) {
-            let values = match (array.data_type(), feature_type) {
-                (DataType::Float32, FeatureType::Float) => {
+        for array in feature_arrays.iter() {
+            let values = match array.data_type() {
+                DataType::Float32 => {
                     let array = array
                         .as_any()
                         .downcast_ref::<Float32Array>()
@@ -736,7 +755,7 @@ impl GradientBoostedDecisionTrees {
                             .collect()
                     }
                 }
-                (DataType::Int64, FeatureType::Int) => {
+                DataType::Int64 => {
                     let array = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
                         ArrowError::InvalidArgumentError("Expected Int64Array".into())
                     })?;
@@ -760,7 +779,7 @@ impl GradientBoostedDecisionTrees {
                             .collect()
                     }
                 }
-                (DataType::Boolean, FeatureType::Indicator) => {
+                DataType::Boolean => {
                     let array = array
                         .as_any()
                         .downcast_ref::<BooleanArray>()
@@ -790,11 +809,9 @@ impl GradientBoostedDecisionTrees {
                             .collect()
                     }
                 }
-                (actual_type, expected_type) => {
+                actual_type => {
                     return Err(ArrowError::InvalidArgumentError(format!(
-                        "Feature: expected {:?} for type {}, got {:?}",
-                        expected_type.get_arrow_data_type(),
-                        expected_type,
+                        "Unsupported data type: {:?}",
                         actual_type
                     )));
                 }
@@ -821,14 +838,51 @@ impl GradientBoostedDecisionTrees {
             .filter_map(|tree| tree.prune(predicate, &self.feature_names))
             .collect();
 
-        GradientBoostedDecisionTrees {
+        let required_features = Self::collect_required_features(&pruned_trees);
+
+        let mut model = GradientBoostedDecisionTrees {
             trees: pruned_trees,
             feature_names: self.feature_names.clone(),
             feature_types: self.feature_types.clone(),
             base_score: self.base_score,
             objective: self.objective.clone(),
             config: self.config.clone(),
-            required_features: self.required_features.clone(),
+            required_features,
+        };
+
+        model.update_feature_metadata();
+        model
+    }
+
+    fn update_feature_metadata(&mut self) {
+        if self.required_features.len() != self.feature_names.len() {
+            let mut required_indices: Vec<_> = self.required_features.iter().copied().collect();
+            required_indices.sort();
+
+            let feature_index_map: HashMap<usize, usize> = required_indices
+                .into_iter()
+                .enumerate()
+                .map(|(new_idx, global_idx)| (global_idx, new_idx))
+                .collect();
+
+            for tree in &mut self.trees {
+                let tree_feature_map: HashMap<usize, usize> = feature_index_map
+                    .iter()
+                    .filter_map(|(&global_idx, &compact_idx)| {
+                        if global_idx >= tree.feature_offset {
+                            Some((global_idx - tree.feature_offset, compact_idx))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                tree.update_feature_metadata(
+                    Arc::clone(&self.feature_names),
+                    Arc::clone(&self.feature_types),
+                    &tree_feature_map,
+                );
+            }
         }
     }
 }
@@ -888,7 +942,7 @@ impl ModelLoader for GradientBoostedDecisionTrees {
 
         let required_features = Self::collect_required_features(&trees);
 
-        Ok(Self {
+        let mut model = Self {
             base_score,
             trees,
             feature_names: Arc::new(feature_names),
@@ -896,7 +950,12 @@ impl ModelLoader for GradientBoostedDecisionTrees {
             objective: objective_type,
             config: PredictorConfig::default(),
             required_features,
-        })
+        };
+
+        // Update feature indices and metadata
+        model.update_feature_metadata();
+
+        Ok(model)
     }
 }
 
