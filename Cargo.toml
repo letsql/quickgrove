@@ -37,7 +37,3 @@ flamelens = "0.3.0"
 [[bench]]
 name = "trusty"
 harness = false
-
-[[bench]]
-name = "predict"
-harness = false
