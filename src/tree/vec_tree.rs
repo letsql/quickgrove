@@ -125,12 +125,6 @@ impl TreeNode {
         }
     }
 
-    // fn set_feature_index(&mut self, index: i32) {
-    //     if let SplitData::Split { feature_index, .. } = &mut self.value {
-    //         *feature_index = index;
-    //     }
-    // }
-
     pub fn new_leaf(weight: f32) -> Self {
         Self {
             value: SplitData::new_leaf(weight),
