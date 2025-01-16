@@ -128,14 +128,12 @@ impl FeatureTree {
                 return current.weight();
             }
 
-            let feature_idx = self.feature_offset + current.feature_index() as usize;
-            let split_value = features[feature_idx];
+            let feature_idx = current.feature_index() as usize;
+            let split_value = unsafe { *features.get_unchecked(feature_idx) };
 
-            // prefetch only left child empirically this works bebtter than doing both right
-            // and left child
-            if let Some(left_child) = nodes.get(current.left()) {
-                cpu_features.prefetch(left_child as *const _);
-            }
+            let left_child = unsafe { nodes.get_unchecked(current.left()) };
+
+            cpu_features.prefetch(left_child as *const _);
 
             let go_right = if split_value.is_nan() {
                 !current.default_left()
