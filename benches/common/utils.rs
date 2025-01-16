@@ -8,7 +8,7 @@ use std::error::Error;
 use std::fs::File;
 use std::sync::Arc;
 use trusty::tree::{
-    FeatureTree, FeatureTreeBuilder, FeatureType, GradientBoostedDecisionTrees, PredictorConfig,
+    FeatureTreeBuilder, FeatureType, GradientBoostedDecisionTrees, PredictorConfig, VecTreeNodes,
 };
 use trusty::Objective;
 
@@ -297,16 +297,7 @@ pub mod data_loader {
 
 pub mod feature_tree {
     use super::*;
-    pub type BuilderInputs = (
-        Vec<String>,
-        Vec<FeatureType>,
-        Vec<i32>,
-        Vec<f32>,
-        Vec<u32>,
-        Vec<u32>,
-        Vec<f32>,
-        Vec<bool>,
-    );
+    pub type BuilderInputs = (Vec<i32>, Vec<f32>, Vec<u32>, Vec<u32>, Vec<f32>, Vec<bool>);
 
     pub fn generate_features(count: usize, nan_probability: f32) -> Vec<f32> {
         let mut rng = rand::thread_rng();
@@ -323,12 +314,6 @@ pub mod feature_tree {
 
     pub fn generate_builder_inputs(nodes: usize, feature_count: usize) -> BuilderInputs {
         let mut rng = rand::thread_rng();
-
-        let feature_names = (0..feature_count)
-            .map(|i| format!("feature_{}", i))
-            .collect();
-
-        let feature_types = vec![FeatureType::Float; feature_count];
 
         let mut split_indices = Vec::with_capacity(nodes);
         let mut split_conditions = Vec::with_capacity(nodes);
@@ -356,8 +341,6 @@ pub mod feature_tree {
         }
 
         (
-            feature_names,
-            feature_types,
             split_indices,
             split_conditions,
             left_children,
@@ -370,12 +353,9 @@ pub mod feature_tree {
     pub fn create_tree_and_features(
         nodes: usize,
         feature_count: usize,
-        feature_offset: usize,
         nan_probability: f32,
-    ) -> (FeatureTree, Vec<f32>) {
+    ) -> (VecTreeNodes, Vec<f32>) {
         let (
-            feature_names,
-            feature_types,
             split_indices,
             split_conditions,
             left_children,
@@ -385,9 +365,6 @@ pub mod feature_tree {
         ) = generate_builder_inputs(nodes, feature_count);
 
         let tree = FeatureTreeBuilder::new()
-            .feature_names(feature_names)
-            .feature_types(feature_types)
-            .feature_offset(feature_offset)
             .split_indices(split_indices)
             .split_conditions(split_conditions)
             .children(left_children, right_children)
@@ -396,7 +373,7 @@ pub mod feature_tree {
             .build()
             .expect("Failed to build tree");
 
-        let features = generate_features(feature_count + feature_offset, nan_probability);
+        let features = generate_features(feature_count, nan_probability);
 
         (tree, features)
     }
@@ -413,7 +390,7 @@ pub mod feature_tree {
 
         for _ in 0..num_trees {
             let (tree, _) =
-                feature_tree::create_tree_and_features(nodes_per_tree, feature_count, 0, 0.0);
+                feature_tree::create_tree_and_features(nodes_per_tree, feature_count, 0.0);
             trees.push(tree);
         }
 

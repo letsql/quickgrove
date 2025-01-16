@@ -1,5 +1,5 @@
 use crate::loader::ModelLoader;
-use crate::tree::{FeatureTree, GradientBoostedDecisionTrees, PredictorConfig};
+use crate::tree::{GradientBoostedDecisionTrees, PredictorConfig, VecTreeNodes};
 use crate::Condition;
 use crate::Predicate;
 use arrow::array::ArrayRef;
@@ -41,7 +41,7 @@ impl Feature {
 
 #[pyclass]
 pub struct PyFeatureTree {
-    tree: FeatureTree,
+    tree: VecTreeNodes,
 }
 
 #[pymethods]
