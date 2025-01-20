@@ -2,7 +2,7 @@ import xgboost as xgb
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-import trustpy
+import quickgrove
 from pathlib import Path
 from enum import Enum, auto
 
@@ -76,7 +76,7 @@ def test_trusty_airline(benchmark, n_trees, chunk_config, batch_size):
         df = df.head(batch_size)
         expected_results = expected_results.head(batch_size)
         
-    model = trustpy.json_load(
+    model = quickgrove.json_load(
         TEST_DIR
         / f"data/benches/reg:squarederror/models/airline_satisfaction_model_trees_{n_trees}_mixed.json"
     )

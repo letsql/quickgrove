@@ -2,7 +2,7 @@
 import xgboost as xgb
 import pandas as pd
 import pyarrow as pa
-import trustpy
+import quickgrove
 from pathlib import Path
 
 DATASET = "synthetic_floats"
@@ -38,7 +38,7 @@ def test_xgb_synthetic_size(benchmark, size):
 def test_trusty_synthetic_size(benchmark, size):
     df, expected_results = load_and_prepare_data()
 
-    model = trustpy.json_load(MODEL_FILE)
+    model = quickgrove.json_load(MODEL_FILE)
 
     sample_df = df.sample(size, random_state=42)
     batch = pa.RecordBatch.from_pandas(sample_df)

@@ -3,7 +3,7 @@ members = [".", "trusty-examples"]
 
 [package]
 name = "trusty"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [lib]
@@ -11,7 +11,7 @@ name = "trusty"
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.maturin]
-name = "trustpy"
+name = "quickgrove"
 python-source = "python"
 
 [dependencies]

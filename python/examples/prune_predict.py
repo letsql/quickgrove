@@ -1,11 +1,11 @@
 import requests
 import tempfile
-import trustpy
+import quickgrove
 
 import pandas as pd
 import pyarrow as pa
 
-from trustpy import Feature
+from quickgrove import Feature
 
 
 def save_github_file_temp(url):
@@ -22,7 +22,7 @@ DATA_RAW_GITHUB_URL = "https://raw.githubusercontent.com/letsql/trusty/refs/head
 temp_path = save_github_file_temp(MODEL_RAW_GITHUB_URL)
 
 df = pd.read_csv(DATA_RAW_GITHUB_URL)
-model = trustpy.json_load(temp_path)
+model = quickgrove.json_load(temp_path)
 
 batch = pa.RecordBatch.from_pandas(df)
 
