@@ -1,6 +1,6 @@
 # Trusty
 
-Trusty is a high-performance Rust library with Python bindings (`trustpy`) library for loading and running pre-trained XGBoost models. Built with Rust and Python bindings, it provides efficient model inference with native Apache Arrow integration and is designed for being used in Database UDFs (see `trusty-examples/datafusion_udf.rs`). 
+Trusty is a high-performance Rust library with Python bindings (`quickgrove`) library for loading and running pre-trained XGBoost models. Built with Rust and Python bindings, it provides efficient model inference with native Apache Arrow integration and is designed for being used in Database UDFs (see `trusty-examples/datafusion_udf.rs`). 
 
 ## Key Features
 
@@ -13,13 +13,13 @@ Trusty is a high-performance Rust library with Python bindings (`trustpy`) libra
 ## Quick Start
 
 ```python
-import trustpy
+import quickgrove
 import pandas as pd
 import pyarrow as pa
-from trustpy import Feature
+from quickgrove import Feature
 
 # Load a pre-trained XGBoost model
-model = trustpy.json_load("model.json")
+model = quickgrove.json_load("model.json")
 
 # Convert pandas DataFrame to Arrow RecordBatch
 df = pd.read_csv("data.csv")
@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ```toml
 [dependencies]
-trustpy = { git = "https://github.com/letsql/trusty" }
+trusty = { git = "https://github.com/letsql/trusty" }
 ```
 
 ## Tree Pruning
@@ -134,7 +134,7 @@ tree = model.tree_info(1)     # Get detailed view of second tree
 
 ## Under the Hood
 
-Trustpy uses Rust for its core functionality, providing:
+quickgrove uses Rust for its core functionality, providing:
 - Fast model loading and inference
 - Schema validation with column names for batches
 - Efficient memory management
