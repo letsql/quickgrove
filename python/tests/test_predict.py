@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-import trustpy
+import quickgrove
 
-from trustpy import Feature
+from quickgrove import Feature
 from pathlib import Path
 
 
@@ -15,7 +15,7 @@ def test_predict():
         TEST_DIR
         / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    model = trustpy.json_load(
+    model = quickgrove.json_load(
         TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()
@@ -33,7 +33,7 @@ def test_pruning():
         TEST_DIR
         / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     ).query("carat <0.2")
-    model = trustpy.json_load(
+    model = quickgrove.json_load(
         TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     batch = pa.RecordBatch.from_pandas(df)
@@ -47,12 +47,12 @@ def test_pruning():
     )
 
 def test_tree_info():
-    model = trustpy.json_load(
+    model = quickgrove.json_load(
         TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     tree = model.tree_info(0)
     assert isinstance(str(tree), str)
-    assert "FeatureTree:" in str(tree)
+    assert "VecTree:" in str(tree)
     assert "Leaf (weight:" in str(tree)
     
     try:
@@ -71,7 +71,7 @@ def test_prediction_chunking():
     df = pd.read_csv(
         TEST_DIR / "tests/data/reg_squarederror/diamonds_data_filtered_trees_100_mixed.csv"
     )
-    model = trustpy.json_load(
+    model = quickgrove.json_load(
         TEST_DIR / "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json"
     )
     actual_preds = df["prediction"].copy().to_list()

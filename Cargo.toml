@@ -11,7 +11,7 @@ name = "trusty"
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.maturin]
-name = "trustpy"
+name = "quickgrove"
 python-source = "python"
 
 [dependencies]

@@ -2,7 +2,7 @@ import pandas as pd
 import pyarrow as pa
 import requests
 
-from trustpy import PyGradientBoostedDecisionTrees
+from quickgrove import PyGradientBoostedDecisionTrees
 
 
 def read_github_raw_file(url):

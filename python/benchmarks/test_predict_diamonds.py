@@ -2,7 +2,7 @@ import xgboost as xgb
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-import trustpy
+import quickgrove
 
 from pathlib import Path
 
@@ -29,7 +29,7 @@ def test_trusty_diamonds(benchmark, chunk_name):
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
-    model = trustpy.json_load(MODEL_FILE)
+    model = quickgrove.json_load(MODEL_FILE)
     batch = pa.RecordBatch.from_pandas(df)
     row_chunk_size, tree_chunk_size = CHUNK_CONFIGS[chunk_name]
     actual_results = benchmark(

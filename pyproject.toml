@@ -3,7 +3,7 @@ requires = ["maturin>=1.2,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "trustpy"
+name = "quickgrove"
 dynamic = ["version"]
 description = ""
 readme = "README.md"
@@ -23,7 +23,7 @@ dev = [
 ]
 
 [project.scripts]
-generate-examples = "trustpy.generate_examples:main"
+generate-examples = "quickgrove.generate_examples:main"
 
 [project.optional-dependencies]
 examples = [
@@ -37,7 +37,7 @@ examples = [
 
 [tool.maturin]
 python-source = "python"
-module-name = "trustpy._internal"
+module-name = "quickgrove._internal"
 features = ["pyo3/extension-module"]
 
 [tool.ruff]
