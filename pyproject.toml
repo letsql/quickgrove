@@ -48,3 +48,4 @@ features = ["pyo3/extension-module"]
 [tool.ruff]
 line-length = 88
 fix = true
+extend-select = ["I"]
