@@ -54,7 +54,7 @@ impl PyFeatureTree {
 
 #[pyclass]
 pub struct PyGradientBoostedDecisionTrees {
-    model: GradientBoostedDecisionTrees,
+    model: Arc<GradientBoostedDecisionTrees>,
 }
 
 #[pymethods]
@@ -65,7 +65,9 @@ impl PyGradientBoostedDecisionTrees {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let model = GradientBoostedDecisionTrees::json_loads(&model_data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(PyGradientBoostedDecisionTrees { model })
+        Ok(PyGradientBoostedDecisionTrees {
+            model: Arc::new(model),
+        })
     }
 
     #[classmethod]
@@ -75,22 +77,28 @@ impl PyGradientBoostedDecisionTrees {
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
         let model = GradientBoostedDecisionTrees::json_load(str_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        Ok(PyGradientBoostedDecisionTrees { model })
+        Ok(PyGradientBoostedDecisionTrees {
+            model: Arc::new(model),
+        })
     }
 
     #[pyo3(signature = (py_record_batches, *, row_chunk_size=64, tree_chunk_size=8))]
     fn predict_batches(
-        &mut self,
+        &self,
         py: Python,
         py_record_batches: &Bound<'_, PyList>,
         row_chunk_size: usize,
         tree_chunk_size: usize,
     ) -> PyArrowResult<PyObject> {
         let mut batches = Vec::with_capacity(py_record_batches.len());
-
-        self.model.set_config(PredictorConfig {
-            row_chunk_size,
-            tree_chunk_size,
+        // Need this clone to make config work. perhaps, another way to avoid it?
+        let model = Arc::new({
+            let mut m = (*self.model).clone();
+            m.set_config(PredictorConfig {
+                row_chunk_size,
+                tree_chunk_size,
+            });
+            m
         });
 
         for py_batch in py_record_batches.iter() {
@@ -129,8 +137,7 @@ impl PyGradientBoostedDecisionTrees {
             batches.push(float32_batch);
         }
 
-        let predictions_array = self
-            .model
+        let predictions_array = model
             .predict_batches(&batches)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
@@ -150,7 +157,7 @@ impl PyGradientBoostedDecisionTrees {
             predicate.add_condition(feature_name, condition);
         }
         Ok(Self {
-            model: self.model.prune(&predicate),
+            model: Arc::new((*self.model).prune(&predicate)),
         })
     }
 
@@ -158,11 +165,7 @@ impl PyGradientBoostedDecisionTrees {
         Ok(format!("{}", self.model))
     }
 
-    fn predict_arrays(
-        &mut self,
-        py: Python,
-        py_arrays: &Bound<'_, PyList>,
-    ) -> PyArrowResult<PyObject> {
+    fn predict_arrays(&self, py: Python, py_arrays: &Bound<'_, PyList>) -> PyArrowResult<PyObject> {
         let mut arrays = Vec::with_capacity(py_arrays.len());
 
         for py_array in py_arrays.iter() {
@@ -213,5 +216,7 @@ pub fn json_load(path: PathBuf) -> PyResult<PyGradientBoostedDecisionTrees> {
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid path"))?;
     let model = GradientBoostedDecisionTrees::json_load(str_path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-    Ok(PyGradientBoostedDecisionTrees { model })
+    Ok(PyGradientBoostedDecisionTrees {
+        model: Arc::new(model),
+    })
 }

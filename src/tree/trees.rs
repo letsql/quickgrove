@@ -399,6 +399,10 @@ pub struct GradientBoostedDecisionTrees {
     pub required_features: HashSet<usize>,
 }
 
+//SAFETY: Send + Sync as all fields are Send + Sync
+unsafe impl Send for GradientBoostedDecisionTrees {}
+unsafe impl Sync for GradientBoostedDecisionTrees {}
+
 impl Default for GradientBoostedDecisionTrees {
     fn default() -> Self {
         GradientBoostedDecisionTrees {
