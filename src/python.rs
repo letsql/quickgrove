@@ -160,6 +160,26 @@ impl PyGradientBoostedDecisionTrees {
             model: Arc::new((*self.model).prune(&predicate)),
         })
     }
+    #[getter]
+    fn feature_names(&self) -> Vec<String> {
+        (*self.model.feature_names).clone()
+    }
+
+    /// Get the types of features used by the model
+    #[getter]
+    fn feature_types(&self) -> Vec<String> {
+        self.model
+            .feature_types
+            .iter()
+            .map(|ft| ft.to_string())
+            .collect()
+    }
+
+    /// Get the indices of required features
+    #[getter]
+    fn required_features(&self) -> Vec<usize> {
+        self.model.required_features.iter().copied().collect()
+    }
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("{}", self.model))
