@@ -1,17 +1,12 @@
 import ibis
 import ibis.expr.datatypes as dt
-import threading
 from trustpy import PyGradientBoostedDecisionTrees
 
 ibis.set_backend("datafusion")
 
-thread_local = threading.local()
-
-def get_thread_local_model():
-    thread_local.model = PyGradientBoostedDecisionTrees.json_load(
+model = PyGradientBoostedDecisionTrees.json_load(
             "data/benches/reg_squarederror/models/diamonds_model_trees_100_float64.json"
-    )
-    return thread_local.model
+            )
 
 @ibis.udf.scalar.pyarrow
 def predict_gbdt(
@@ -38,7 +33,6 @@ def predict_gbdt(
     clarity_vvs1: dt.float64,
     clarity_vvs2: dt.float64
 ) -> dt.float32:
-    model = get_thread_local_model()
     array_list = [
         carat, table, x, y, z,
         cut_good, cut_ideal, cut_premium, cut_very_good,
@@ -60,3 +54,5 @@ result = t.mutate(
         t.clarity_vvs1, t.clarity_vvs2
     )
 )
+
+result.execute()
