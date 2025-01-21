@@ -2,6 +2,7 @@ use crate::loader::ModelLoader;
 use crate::tree::{GradientBoostedDecisionTrees, PredictorConfig, VecTreeNodes};
 use crate::Condition;
 use crate::Predicate;
+use arrow::array::Array;
 use arrow::array::ArrayRef;
 use arrow::compute::cast;
 use arrow::datatypes::{DataType, Field, Schema};
@@ -10,9 +11,9 @@ use arrow::record_batch::RecordBatch;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::types::PyType;
+use pyo3_arrow::error::PyArrowResult;
+use pyo3_arrow::PyArray;
 use std::path::PathBuf;
-
-use pyo3_arrow::{error::PyArrowResult, PyArray};
 use std::sync::Arc;
 
 #[pyclass]
@@ -128,11 +129,10 @@ impl PyGradientBoostedDecisionTrees {
             batches.push(float32_batch);
         }
 
-        let predictions_array = py.allow_threads(|| {
-            self.model
-                .predict_batches(&batches)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
-        })?;
+        let predictions_array = self
+            .model
+            .predict_batches(&batches)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         let field = Field::new("predictions", DataType::Float32, false);
         Ok(PyArray::new(Arc::new(predictions_array), Arc::new(field)).to_pyarrow(py)?)
@@ -156,6 +156,37 @@ impl PyGradientBoostedDecisionTrees {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!("{}", self.model))
+    }
+
+    fn predict_arrays(
+        &mut self,
+        py: Python,
+        py_arrays: &Bound<'_, PyList>,
+    ) -> PyArrowResult<PyObject> {
+        let mut arrays = Vec::with_capacity(py_arrays.len());
+
+        for py_array in py_arrays.iter() {
+            let arrow_array: PyArray = py_array.extract()?;
+            let array_ref = arrow_array.array();
+
+            let processed_array = if array_ref.data_type() == &DataType::Float64 {
+                Arc::new(cast(&array_ref, &DataType::Float32).unwrap())
+            } else {
+                array_ref.clone()
+            };
+
+            arrays.push(processed_array);
+        }
+
+        let predictions_array = self
+            .model
+            .predict_arrays(&arrays)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        let predictions_ref: ArrayRef = Arc::new(predictions_array);
+        let field = Arc::new(Field::new("predictions", DataType::Float32, false));
+
+        Ok(PyArray::new(predictions_ref, field).to_pyarrow(py)?)
     }
 
     #[pyo3(signature = (tree_index=None))]
