@@ -1,6 +1,6 @@
 import ibis
 import ibis.expr.datatypes as dt
-from trustpy import PyGradientBoostedDecisionTrees
+from quickgrove import PyGradientBoostedDecisionTrees
 
 ibis.set_backend("datafusion")
 
