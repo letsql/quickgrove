@@ -8,7 +8,7 @@ import ibis.expr.operations as ops
 from ibis import _
 from ibis.common.patterns import pattern, replace
 from ibis.util import Namespace
-from trustpy import Feature, PyGradientBoostedDecisionTrees
+from quickgrove import Feature, PyGradientBoostedDecisionTrees
 
 p = Namespace(pattern, module=ops)
 
