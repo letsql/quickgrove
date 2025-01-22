@@ -7,7 +7,7 @@ use trusty::loader::ModelLoader;
 use trusty::predicates::{Condition, Predicate};
 use trusty::GradientBoostedDecisionTrees;
 
-const MODEL_PATH: &str = "tests/models/reg:squarederror/diamonds_model_trees_100_mixed.json";
+const MODEL_PATH: &str = "tests/models/reg_squarederror/diamonds_model_trees_100_mixed.json";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Running tree predictions example");

@@ -11,7 +11,7 @@ TEST_DIR = Path(__file__).parent.parent.parent
 
 MODEL_FILE = (
     TEST_DIR
-    / "data/benches/reg:squarederror/models/diamonds_model_trees_100_mixed.json"
+    / "data/benches/reg_squarederror/models/diamonds_model_trees_100_mixed.json"
 )
 
 CHUNK_CONFIGS = {
@@ -25,7 +25,7 @@ CHUNK_CONFIGS = {
 def test_trusty_diamonds(benchmark, chunk_name):
     df = pd.read_csv(
         TEST_DIR
-        / "data/benches/reg:squarederror/data/diamonds_data_filtered_trees_100_mixed.csv"
+        / "data/benches/reg_squarederror/data/diamonds_data_filtered_trees_100_mixed.csv"
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
@@ -45,7 +45,7 @@ def test_trusty_diamonds(benchmark, chunk_name):
 def test_xgb_diamonds(benchmark):
     df = pd.read_csv(
         TEST_DIR
-        / "data/benches/reg:squarederror/data/diamonds_data_filtered_trees_100_mixed.csv"
+        / "data/benches/reg_squarederror/data/diamonds_data_filtered_trees_100_mixed.csv"
     )
     model = xgb.Booster()
     model.load_model(MODEL_FILE)

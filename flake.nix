@@ -1,5 +1,5 @@
 {
-  description = "A devShell for uv and cargo for trustpy";
+  description = "A devShell for uv and cargo for quickgrove";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -87,7 +87,7 @@
           sourcePreference = "wheel";
         };
         editableOverlay = _final: prev: {
-          trustpy = prev.trustpy.override (_: {
+          quickgrove = prev.quickgrove.override (_: {
             # we can't use mkEditablePyprojectOverlay: it tries to append "src/"
             editableRoot = "$REPO_ROOT/python";
           });
@@ -128,7 +128,7 @@
           });
         };
         pyprojectOverrides = _final: prev: {
-          trustpy = prev.trustpy.overrideAttrs (old: {
+          quickgrove = prev.quickgrove.overrideAttrs (old: {
             inherit cargoDeps;
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
               pkgs.rustPlatform.cargoSetupHook
@@ -138,7 +138,7 @@
           });
         };
         pyprojectOverrides-editable = _final: prev: {
-          trustpy = prev.trustpy.overrideAttrs (old: {
+          quickgrove = prev.quickgrove.overrideAttrs (old: {
             inherit cargoDeps;
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
               rustToolchain
@@ -173,8 +173,8 @@
                 editableOverlay
               ]
             );
-        venv-312 = pythonSet.mkVirtualEnv "trustpy-venv" workspace.deps.all;
-        venv-editable-312 = pythonSet-editable.mkVirtualEnv "trustpy-editable-venv" workspace.deps.all;
+        venv-312 = pythonSet.mkVirtualEnv "quickgrove-venv" workspace.deps.all;
+        venv-editable-312 = pythonSet-editable.mkVirtualEnv "quickgrove-editable-venv" workspace.deps.all;
         flameScript = pkgs.writeScriptBin "flame" ''
           #!${pkgs.stdenv.shell}
           
@@ -191,7 +191,7 @@
             echo "    Example: flame example airline_prediction"
             echo ""
             echo "  bench <bench> <filter>  - Profile a benchmark with optional test filter"
-            echo "    Example: flame bench trustpy trustpy/airline/float64"
+            echo "    Example: flame bench trusty trusty/airline/float64"
             echo ""
             show_examples
           }
@@ -255,7 +255,7 @@
             *)      suffix=so    ;;
           esac
           source=$repo_dir/target/release/maturin/lib$name.$suffix
-          target=$repo_dir/python/trustpy/_internal.so
+          target=$repo_dir/python/quickgrove/_internal.so
 
           if [ -e "$target" ]; then
             for other in $(find src -name '*rs'); do
@@ -276,7 +276,7 @@
         '';
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-        trustpy = craneLib.buildPackage (commonArgs // {
+        quickgrove = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
         });
 
@@ -302,7 +302,7 @@
           exec ${datafusion-udf}/bin/datafusion_udf "$@"
         '';
 
-        dataFiles = pkgs.runCommand "trustpy-data-files" { } ''
+        dataFiles = pkgs.runCommand "quickgrove-data-files" { } ''
           mkdir -p $out/data
           ln -s ${datasets.diamonds} $out/data/diamonds.csv
           ln -s ${datasets.airline} $out/data/airline_satisfaction.csv
@@ -313,7 +313,7 @@
           echo "Copying data files from Nix store..."
           cp -f ${dataFiles}/data/* data/
           # must use -editable else we rebuild every time flake.nix changes
-          ${venv-editable-312}/bin/python -m trustpy.generate_examples --data_dir data --base_dir data --generation_type benchmark
+          ${venv-editable-312}/bin/python -m quickgrove.generate_examples --data_dir data --base_dir data --generation_type benchmark
 
         '';
         clippy-hook = pkgs.writeShellScriptBin "clippy-hook" ''
@@ -356,7 +356,7 @@
           inherit pythonSet pythonSet-editable;
         };
         packages = {
-          inherit trustpy;
+          inherit quickgrove;
           data = dataFiles;
           datafusion-udf-example = datafusion-udf-wrapper;
           default = datafusion-udf-wrapper;
@@ -442,7 +442,7 @@
             '';
           };
           p2n = pkgs.mkShell {
-            inputsFrom = [ trustpy ];
+            inputsFrom = [ quickgrove ];
             buildInputs = [
               rustToolchain
               pkgs.maturin

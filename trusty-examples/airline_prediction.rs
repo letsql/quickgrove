@@ -10,9 +10,9 @@ use trusty::GradientBoostedDecisionTrees;
 
 //TODO: host the model files on s3 bucket so we dont have to hardcode it
 const MODEL_JSON: &str =
-    "data/benches/reg:squarederror/models/airline_satisfaction_model_trees_1000_mixed.json";
+    "data/benches/reg_squarederror/models/airline_satisfaction_model_trees_1000_mixed.json";
 const AIRLINE_DATA: &str =
-    "data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_1000_mixed.csv";
+    "data/benches/reg_squarederror/data/airline_satisfaction_data_full_trees_1000_mixed.csv";
 
 fn read_airline_csv_to_split_batches(
     path: &str,

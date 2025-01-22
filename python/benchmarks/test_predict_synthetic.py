@@ -10,7 +10,7 @@ N_TREES = 1000
 TEST_DIR = Path(__file__).parent.parent.parent
 MODEL_FILE = (
     TEST_DIR
-    / f"data/benches/reg:squarederror/models/{DATASET}_model_trees_{N_TREES}_float64.json"
+    / f"data/benches/reg_squarederror/models/{DATASET}_model_trees_{N_TREES}_float64.json"
 )
 
 SAMPLE_SIZES = [2, 16, 32, 64, 128, 256, 512, 1024, 8192]
@@ -19,7 +19,7 @@ SAMPLE_SIZES = [2, 16, 32, 64, 128, 256, 512, 1024, 8192]
 def load_and_prepare_data():
     df = pd.read_csv(
         TEST_DIR
-        / f"data/benches/reg:squarederror/data/{DATASET}_data_full_trees_{N_TREES}_float64.csv"
+        / f"data/benches/reg_squarederror/data/{DATASET}_data_full_trees_{N_TREES}_float64.csv"
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)

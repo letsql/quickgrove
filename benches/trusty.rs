@@ -69,7 +69,7 @@ fn benchmark_diamonds_prediction(c: &mut Criterion) -> Result<()> {
     let trees =
         load_model("data/benches/reg_squarederror/models/diamonds_model_trees_100_mixed.json")?;
     let (data_batches, _) = data_loader::load_diamonds_dataset(
-        "data/benches/reg:squarederror/data/diamonds_data_full_trees_100_mixed.csv",
+        "data/benches/reg_squarederror/data/diamonds_data_full_trees_100_mixed.csv",
         BATCHSIZE,
         false,
     )?;

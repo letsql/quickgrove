@@ -35,12 +35,12 @@ def format_xgb_id(n_trees, batch_size, predict_mode):
 def test_xgb_airline(benchmark, n_trees, batch_size, predict_mode):
     df = pd.read_csv(
         TEST_DIR
-        / f"data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_{n_trees}_mixed.csv"
+        / f"data/benches/reg_squarederror/data/airline_satisfaction_data_full_trees_{n_trees}_mixed.csv"
     )
     model = xgb.Booster()
     model.load_model(
         TEST_DIR
-        / f"data/benches/reg:squarederror/models/airline_satisfaction_model_trees_{n_trees}_mixed.json"
+        / f"data/benches/reg_squarederror/models/airline_satisfaction_model_trees_{n_trees}_mixed.json"
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
@@ -67,7 +67,7 @@ def test_xgb_airline(benchmark, n_trees, batch_size, predict_mode):
 def test_trusty_airline(benchmark, n_trees, chunk_config, batch_size):
     df = pd.read_csv(
         TEST_DIR
-        / f"data/benches/reg:squarederror/data/airline_satisfaction_data_full_trees_{n_trees}_mixed.csv"
+        / f"data/benches/reg_squarederror/data/airline_satisfaction_data_full_trees_{n_trees}_mixed.csv"
     )
     expected_results = df["prediction"].copy()
     df = df.drop(["target", "prediction"], axis=1)
@@ -78,7 +78,7 @@ def test_trusty_airline(benchmark, n_trees, chunk_config, batch_size):
         
     model = quickgrove.json_load(
         TEST_DIR
-        / f"data/benches/reg:squarederror/models/airline_satisfaction_model_trees_{n_trees}_mixed.json"
+        / f"data/benches/reg_squarederror/models/airline_satisfaction_model_trees_{n_trees}_mixed.json"
     )
     batch = pa.RecordBatch.from_pandas(df)
     row_chunk_size, tree_chunk_size = chunk_config
