@@ -706,12 +706,10 @@ wheels = [
 name = "quickgrove"
 version = "0.1.2"
 source = { editable = "." }
-dependencies = [
-    { name = "ibis-framework", extra = ["datafusion", "duckdb"] },
-]
 
 [package.optional-dependencies]
 examples = [
+    { name = "ibis-framework", extra = ["datafusion", "duckdb"] },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pythran" },
@@ -734,7 +732,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ibis-framework", extras = ["datafusion", "duckdb"], specifier = "==9.5" },
+    { name = "ibis-framework", extras = ["datafusion", "duckdb"], marker = "extra == 'examples'", specifier = ">=9.5.0" },
     { name = "pandas", marker = "extra == 'examples'", specifier = ">=2.2.3" },
     { name = "pyarrow", marker = "extra == 'examples'", specifier = ">=17.0.0" },
     { name = "pyarrow", marker = "extra == 'pyarrow'", specifier = ">=17.0.0" },
