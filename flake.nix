@@ -126,6 +126,16 @@
               pkgs.cmake
             ];
           });
+          duckdb = prev.duckdb.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ (final.resolveBuildSystem {
+              setuptools = [ ];
+              wheel = [ ];
+              pybind11 = [ ];
+            }) ++ [
+              pkgs.cmake
+              pkgs.pkg-config
+            ];
+          });
         };
         pyprojectOverrides = _final: prev: {
           quickgrove = prev.quickgrove.overrideAttrs (old: {
