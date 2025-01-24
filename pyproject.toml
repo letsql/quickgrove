@@ -11,9 +11,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Hussain Sultan", email = "hussain@letsql.com" },
 ]
-dependencies = [
-    "ibis-framework[datafusion,duckdb]==9.5",
-]
+dependencies = []
 
 [dependency-groups]
 dev = [
@@ -29,6 +27,7 @@ generate-examples = "quickgrove.generate_examples:main"
 
 [project.optional-dependencies]
 examples = [
+    "ibis-framework[datafusion,duckdb]>=9.5.0",
     "pandas>=2.2.3",
     "pyarrow>=17.0.0",
     "pythran>=0.17.0",
