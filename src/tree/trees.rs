@@ -77,7 +77,7 @@ impl VecTreeNodes {
     pub fn depth(&self) -> usize {
         fn recursive_depth(tree: &VecTreeNodes, node: &TreeNode) -> usize {
             if node.is_leaf() {
-                1
+                0
             } else {
                 1 + tree
                     .get_left_child(node)
@@ -897,7 +897,7 @@ mod tests {
     fn test_tree_depth_and_size() -> Result<(), FeatureTreeError> {
         let tree = create_simple_tree()?;
 
-        assert_eq!(tree.depth(), 3); // Root -> Income split -> Leaf
+        assert_eq!(tree.depth(), 2); // Root -> Income split -> Leaf
         assert_eq!(tree.num_nodes(), 5); // 2 internal nodes + 3 leaf nodes
 
         Ok(())
