@@ -255,7 +255,10 @@
           set -eu
 
           repo_dir=$(git rev-parse --show-toplevel)
-          name=trusty
+          name=quickgrove
+          name_cargo=trusty  # For lib name
+
+
           if [ "$(basename "$repo_dir")" != "$name" ]; then
             echo "not in $name, exiting"
             exit 1
@@ -264,7 +267,7 @@
             Darwin) suffix=dylib ;;
             *)      suffix=so    ;;
           esac
-          source=$repo_dir/target/release/maturin/lib$name.$suffix
+          source=$repo_dir/target/release/maturin/lib$name_cargo.$suffix
           target=$repo_dir/python/quickgrove/_internal.so
 
           if [ -e "$target" ]; then
