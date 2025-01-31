@@ -2,6 +2,10 @@
 
 Trusty is a high-performance Rust library with Python bindings (`quickgrove`) library for loading and running pre-trained XGBoost models. Built with Rust and Python bindings, it provides efficient model inference with native Apache Arrow integration and is designed for being used in Database UDFs (see `trusty-examples/datafusion_udf.rs`). 
 
+> [!CAUTION]
+> This library is currently in experimental status. 
+> The codebase is underway a name change from `trusty` -> `quickgrove`
+
 ## Key Features
 
 - **Dynamic XGBoost Model Loading**: Load pre-trained XGBoost models without recompilation
@@ -162,13 +166,12 @@ All numeric features are internally processed as `Float32` for optimal performan
   - [ ] pairwise
   - [ ] ndcg
   - [ ] map
-- Support categorical feature type
+- [ ] Support categorical feature type
 - [ ] LightGBM integration
 - [ ] CatBoost integration
 
 ### Core Development
-- [ ] Native training capabilities
-- [ ] Python interface layer
+- [x] Python interface layer
 - [ ] Extended preprocessing capabilities
 
 ## Contributing
