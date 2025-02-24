@@ -4,6 +4,8 @@ pub mod arch;
 pub mod loader;
 pub mod objective;
 pub mod predicates;
+
+#[allow(clippy::useless_conversion)]
 mod python;
 pub mod tree;
 
